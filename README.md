@@ -1,2 +1,2 @@
-# SherlockCell  <img src="docs/images/SherlockCell_full.png" alt="SherlockCell logo" align="right" width="350">
+# SherlockCell  <img src="docs/images/SherlockCell_full.png" alt="SherlockCell logo" align="right" width="150">
 `SherlockCell` is a pipeline for identifying malignant cells from single-cell RNA sequencing (scRNA-seq) data based on copy number variation (CNV) profiles and tumor heterogeneity features. It is built on **swiftCNV**, a fast, scalable Python implementation of the core [InferCNV](https://github.com/broadinstitute/inferCNV/wiki) algorithm extended with additional features. 
