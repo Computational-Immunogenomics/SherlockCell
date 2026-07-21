@@ -1,1 +1,7 @@
-.sherlockcell.sh
+sherlockcell.sh
+samplesheet.tsv
+.nextflow.log*
+.nextflow/
+.nvm/
+history
+.nextflow/history
