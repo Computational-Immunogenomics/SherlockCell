@@ -1,2 +1,2 @@
 dataset	adata_path	cell_origin	reference_cells	sample_key	cell_type_key	annot_mode
-metastatic_colorectal_Moorman2024	/home/adrianparrilla@vhio.org/immunocompnas1/datasets/other_sc/metastatic_colorectal_Moorman2024	Epithelial				annotation
+metastatic_colorectal_2026	/path/to/.h5ad	Epithelial				annotation
