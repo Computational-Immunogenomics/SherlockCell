@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import logging
 import argparse
@@ -14,7 +15,11 @@ from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from matplotlib.patches import Rectangle
+from matplotlib.path import Path as MplPath
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.lines import Line2D
+import matplotlib.pyplot as plt
+
 
 
 
@@ -144,7 +149,7 @@ class MalignantClassifier:
         self.verbose = verbose
 
         if self.sample_key not in self.adata.obs:
-            raise ValueError(f"'{sample_key}' not present in adata.obs")
+            raise ValueError(f"{sample_key} not present in adata.obs")
         
         if self.cell_type_key not in self.adata.obs:
             raise ValueError(f"'{cell_type_key}' not present in adata.obs")
@@ -175,11 +180,6 @@ class MalignantClassifier:
                 
         logger = logging.getLogger()
         
-        # Setup output directory
-        # self.out_dir = self.data_dir / "reannot_results" / "malignant_classif"
-        # self.out_dir.mkdir(parents=True, exist_ok=True)
-        # logging.info(f">> Output directory verified at: {self.out_dir}")
-
         if self.verbose:
             logger.setLevel(logging.INFO)
         else:
@@ -884,86 +884,6 @@ class MalignantClassifier:
             'cosine_dist': cosine_dist_df,
             'centroids_dist': clipped_dist_df
         }
-
-
-    def plot_density_ridges(self, value_col, cutoff_col_1=None, cutoff_col_2=None, x_label="Score", title="", x_breaks=None):
-        """
-        Plots the density distribution of the scores with up to two threshold markers.
-        """
-        metrics_df = self.adata.obs
-
-        # 1. Reverse sample order
-        samples = list(metrics_df['sample'].unique())[::-1] 
-        
-        # Dynamically scale height based on sample count
-        fig, ax = plt.subplots(figsize=(9, len(samples) * 0.7 + 1.5))
-        
-        # Generate a matching color palette
-        colors = sns.color_palette("husl", len(samples))
-        
-        overlap = 0.9  # Controls ridge height expansion
-        
-        # 2. Plot each sample ridge from top to bottom
-        for i, sample in enumerate(samples):
-            sample_metrics_df = metrics_df[metrics_df['sample'] == sample]
-            values = sample_metrics_df[value_col].dropna()
-            
-            if len(values) < 2: # Drop empty/insufficient data rows
-                continue
-                
-            # Extract the sample's unique cutoff values if the columns are provided and exist
-            cutoff_1 = sample_metrics_df[cutoff_col_1].iloc[0] if (cutoff_col_1 and cutoff_col_1 in sample_metrics_df.columns) else None
-            cutoff_2 = sample_metrics_df[cutoff_col_2].iloc[0] if (cutoff_col_2 and cutoff_col_2 in sample_metrics_df.columns) else None
-            
-            # Calculate Kernel Density Estimate (KDE)
-            kde = gaussian_kde(values)
-            x_eval = np.linspace(values.min(), values.max(), 500)
-            y_eval = kde(x_eval)
-            
-            # Normalize peak height to our strict overlap scale
-            if y_eval.max() > 0:
-                y_eval = (y_eval / y_eval.max()) * overlap
-                
-            # Establish this sample's integer Y-axis baseline
-            baseline = i
-            y_plot = y_eval + baseline
-            
-            # Set zorder so lower ridges beautifully mask/overlap upper ridges
-            current_zorder = len(samples) - i
-            
-            # Draw the ridge outline and colored fill
-            ax.plot(x_eval, y_plot, color='#262626', lw=1, zorder=current_zorder)
-            ax.fill_between(x_eval, baseline, y_plot, color=colors[i], alpha=0.7, zorder=current_zorder)
-            
-            # Draw the baseline segment under the ridge
-            ax.plot([x_eval.min(), x_eval.max()], [baseline, baseline], color='grey', lw=0.5, alpha=0.5, zorder=current_zorder)
-            
-            # 3. Draw the sample-specific cutoff segment lines
-            # First Cutoff (Solid Line)
-            if cutoff_1 is not None and x_eval.min() <= cutoff_1 <= x_eval.max():
-                ax.plot([cutoff_1, cutoff_1], [baseline, baseline + 0.45], color='black', lw=1.2, zorder=current_zorder + 1)
-                
-            # Second Cutoff (Dashed Line)
-            if cutoff_2 is not None and x_eval.min() <= cutoff_2 <= x_eval.max():
-                ax.plot([cutoff_2, cutoff_2], [baseline, baseline + 0.45], color='black', lw=1.2, linestyle='--', zorder=current_zorder + 1)
-
-        # 4. Themes & Customizations
-        ax.set_yticks(range(len(samples)))
-        ax.set_yticklabels(samples, fontweight='bold', fontsize=10)
-        ax.set_xlabel(x_label, fontweight='bold', fontsize=11, labelpad=10)
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
-        
-        if x_breaks is not None:
-            ax.set_xticks(x_breaks)
-            ax.set_xlim(min(x_breaks), max(x_breaks))
-            
-        ax.grid(axis='x', color='grey', linestyle='-', alpha=0.2)
-        sns.despine(ax=ax, left=True)
-        
-        plt.tight_layout()
-        plt.show()
-        
-        return fig, ax
             
       
     def get_corr_scores(self, n_jobs=-1, obsm_layer='cnv_mat_arms'):
@@ -1036,109 +956,127 @@ class MalignantClassifier:
 
 
     def plot_cnv_chr_arms_pdf(self):
+
         if not hasattr(self, 'master_hotspotarms_df') or self.master_hotspotarms_df is None:
             raise ValueError("Data not found. Run get_corr_scores() first.")
 
         df = self.master_hotspotarms_df
         sample_ids = df['sample'].unique()
-        pdf_path = self.out_dir / "boxplots_cnv_chrArms.pdf"
+        
+        out_dir = getattr(self, 'out_dir', Path('.'))
+        filename = "boxplots_cnv_chrArms.pdf"
         
         min_mad = 0.005
 
-        # 1. Calculate MAD Thresholds
-        normal_data = sample_data[sample_data['group'] == 'Reference']
-        mad_records = []
-        for arm in sample_data['chrarms'].unique():
-            arm_norm = normal_data[normal_data['chrarms'] == arm]['cnv_value']
-            med_norm = arm_norm.median() if len(arm_norm) > 0 else np.nan
+        logging.info(f"Generating hotspot arms pdf report for {len(sample_ids)} samples...")
 
-            raw_mad = median_abs_deviation(arm_norm, nan_policy='omit') if len(arm_norm) > 0 else np.nan
-            mad_norm = max(raw_mad, min_mad) if not np.isnan(raw_mad) else np.nan
+        # Initialize PdfPages to create a multi-page document
+        with PdfPages(filename) as pdf:
             
-            mad_records.append({
-                'chrarms': arm, 
-                'lower_mad': med_norm - (2 * mad_norm), 
-                'upper_mad': med_norm + (3 * mad_norm)
-            })
+            # Loop through each unique sample to generate its own page
+            for sample_id in sample_ids:
 
-        mad_thresholds = pd.DataFrame(mad_records)
-
-        # 2. Identify Hotspot Arms
-        hotspot_mapping = sample_data[['chrarms', 'hotspotarm']].drop_duplicates()
-        hotspot_arms = hotspot_mapping[hotspot_mapping['hotspotarm'] == 'Yes']['chrarms'].tolist()
-
-        unique_arms = sample_data['chrarms'].unique()
-
-        fig, ax = plt.subplots(figsize=(12, 6))
-
-        # 3. Draw Background MAD Thresholds (The grey crossbars)
-        # Seaborn places categorical x-ticks at integer intervals (0, 1, 2...)
-        arm_to_x = {arm: i for i, arm in enumerate(unique_arms)}
-
-        for _, row in mad_thresholds.iterrows():
-            arm = row['chrarms']
-            if arm in arm_to_x and not np.isnan(row['lower_mad']):
-                x_center = arm_to_x[arm]
-                rect = Rectangle(
-                    xy=(x_center - 0.5, row['lower_mad']), # Bottom-left corner
-                    width=1.0,                             # Span exactly across the tick
-                    height=row['upper_mad'] - row['lower_mad'],
-                    fill=True, color='grey', alpha=0.3, lw=0
-                )
-                ax.add_patch(rect)
-
-        # 4. Draw the Boxplots
-        sns.boxplot(
-        data=sample_data,
-        x='chrarms',
-        y='cnv_value',
-        hue='group',
-        palette={"Query": "#F8766D", "Reference": "#00BFC4"},
-        showfliers=False,  # Hides outliers (equivalent to outlier_shape="")
-        order=unique_arms,
-        ax=ax,
-        linewidth=1.2
-        )
-
-        # 5. Formatting & Theme Customization
-        ax.set_ylim(-0.2, 0.2)
-        ax.set_xlabel("")
-        ax.set_ylabel("cnv_value", fontweight='bold', fontsize=12)
-        ax.set_title(str('12'), fontsize=16, pad=15)
-
-        # Match theme_classic() + grid
-        ax.grid(color='grey', alpha=0.2)
-        ax.set_axisbelow(True) # Ensure grid is drawn behind the boxplots
-        sns.despine(ax=ax)     # Removes top and right borders
-
-        # 6. Highlight Hotspot Arms (Bold & Red) and Rotate
-        for tick_label in ax.get_xticklabels():
-            arm_name = tick_label.get_text()
-            tick_label.set_rotation(90)
-
-            if arm_name in hotspot_arms:
-                tick_label.set_fontweight('bold')
-
-        # 7. Move Legend to Bottom
-        sns.move_legend(
-        ax, "lower center",
-        bbox_to_anchor=(0.5, -0.2), # Push it completely below the x-axis labels
-        ncol=2, title=None, frameon=False, fontsize=12
-        )
-
-        # Save and close
-        plt.tight_layout()
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
+                sample_data = df[df['sample'] == sample_id].copy()
                 
-        logging.info(f">> Seaborn hotspot arms report saved!")
+                # 1. Calculate MAD Thresholds
+                normal_data = sample_data[sample_data['group'] == 'Reference']
+                mad_records = []
+                
+                for arm in sample_data['chrarms'].unique():
+                    arm_norm = normal_data[normal_data['chrarms'] == arm]['cnv_value']
+                    med_norm = arm_norm.median() if len(arm_norm) > 0 else np.nan
+
+                    raw_mad = median_abs_deviation(arm_norm, nan_policy='omit') if len(arm_norm) > 0 else np.nan
+                    mad_norm = max(raw_mad, min_mad) if not np.isnan(raw_mad) else np.nan
+                    
+                    mad_records.append({
+                        'chrarms': arm, 
+                        'lower_mad': med_norm - (2 * mad_norm), 
+                        'upper_mad': med_norm + (3 * mad_norm)
+                    })
+
+                mad_thresholds = pd.DataFrame(mad_records)
+
+                # 2. Identify Hotspot Arms
+                hotspot_mapping = sample_data[['chrarms', 'hotspotarm']].drop_duplicates()
+                hotspot_arms = hotspot_mapping[hotspot_mapping['hotspotarm'] == 'Yes']['chrarms'].tolist()
+
+                unique_arms = sample_data['chrarms'].unique()
+
+                fig, ax = plt.subplots(figsize=(12, 6))
+
+                # 3. Draw Background MAD Thresholds (The grey crossbars)
+                arm_to_x = {arm: i for i, arm in enumerate(unique_arms)}
+
+                for _, row in mad_thresholds.iterrows():
+                    arm = row['chrarms']
+                    if arm in arm_to_x and not np.isnan(row['lower_mad']):
+                        x_center = arm_to_x[arm]
+                        rect = Rectangle(
+                            xy=(x_center - 0.5, row['lower_mad']), 
+                            width=1.0, 
+                            height=row['upper_mad'] - row['lower_mad'],
+                            fill=True, color='grey', alpha=0.3, lw=0
+                        )
+                        ax.add_patch(rect)
+
+                # 4. Draw the Boxplots
+                sns.boxplot(
+                    data=sample_data,
+                    x='chrarms',
+                    y='cnv_value',
+                    hue='group',
+                    palette={"Query": "#F8766D", "Reference": "#00BFC4"},
+                    showfliers=False, 
+                    order=unique_arms,
+                    ax=ax,
+                    linewidth=1.2
+                )
+
+                # 5. Formatting & Theme Customization
+                ax.set_ylim(-0.2, 0.2)
+                ax.set_xlabel("")
+                ax.set_ylabel("cnv_value", fontweight='bold', fontsize=12)
+                
+                # Update title to dynamically reflect the sample ID
+                ax.set_title(f"Sample: {sample_id}", fontsize=16, pad=15) 
+
+                ax.grid(color='grey', alpha=0.2)
+                ax.set_axisbelow(True) 
+                sns.despine(ax=ax) 
+
+                # 6. Highlight Hotspot Arms (Bold & Red) and Rotate
+                for tick_label in ax.get_xticklabels():
+                    arm_name = tick_label.get_text()
+                    tick_label.set_rotation(90)
+
+                    if arm_name in hotspot_arms:
+                        tick_label.set_fontweight('bold')
+
+                # 7. Move Legend to Bottom
+                sns.move_legend(
+                    ax, "lower center",
+                    bbox_to_anchor=(0.5, -0.2), 
+                    ncol=2, title=None, frameon=False, fontsize=12
+                )
+
+                # Save the current figure to the PDF and close it
+                plt.tight_layout()
+                pdf.savefig(fig, bbox_inches='tight')
+                plt.close(fig)
+                
+        logging.info(">> Seaborn hotspot arms report saved!")
 
 
-    def get_malignant_score(self, groupby= sample_key):
+    def get_malignant_score(self, groupby=None):
         """
         Calculates a combined score from three metrics and classifies cells into
         Malignant, Malignant-like, or Normal using a multi-strictness threshold window.
         """
+
+        if groupby is None:
+            groupby = self.sample_key
+
         corr_df = self.master_corr_df
         centroids_df = self.master_centroids_df
         cosine_df = self.master_cosine_df
@@ -1206,39 +1144,6 @@ class MalignantClassifier:
             
         self.adata.obs = self.adata.obs.join(combined_df[cols_to_transfer], how='left')
         logging.info(">> Successfully computed multi-tier malignant scores and classifications.")
-
-
-    def plot_malignant_score(self, reduction = 'X_umap', figsize=(10, 4), bins=50, w_pad = 3):
-
-        if 'malignant_score' not in self.adata.obs:
-            raise ValueError("'malignant_score' not in self.adata.obs")
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize= figsize)
-
-        sc.pl.embedding(
-            self.adata,
-            basis = reduction,
-            color='malignant_score', 
-            ax=ax1, 
-            show=False,
-            vmax='p99',
-            frameon=True,
-            title= 'Maligant score'
-        )
-
-        ax2.hist(
-            self.adata.obs['malignant_score'].dropna(), 
-            bins=bins, 
-            color='skyblue', 
-            edgecolor='black'
-        )
-        ax2.set_title('Distribution of Malignant Scores')
-        ax2.set_xlabel('Malignant Score')
-        ax2.set_ylabel('Cell Count')
-
-        # 4. Clean up layout and display
-        plt.tight_layout(w_pad= w_pad)
-        plt.show()
 
 
     def generate_pca(self):
@@ -1424,6 +1329,10 @@ class MalignantClassifier:
             logging.info(">> Final Classification Summary:")
             for status, count in counts.items():
                 logging.info(f"   - {status}: {count} cells")
+
+        # remap reference and quary
+        adata.obs['reference_group'] = (adata.obs['reference'].map({True: 'Reference', False: 'Query', 'True': 'Reference', 'False': 'Query'})
+        .astype('category'))
                 
 
     def dbscan_outlier(self, classif_col='malignant_classif', embedding_key='X_umap', groupby='sample', outlier_col='dbscan_outlier'):
@@ -1506,15 +1415,103 @@ class MalignantClassifier:
         logging.info(">> Sample-wise DBSCAN outlier removal done.")
 
 
-    def plot_alluvial(self, cell_type_key='cell_type', col2='CNV_classif', col3='malignant_classif', color_dict=None, figsize=(8, 6), gap_ratio=0, category_fontsize=10, column_fontsize=9):
+def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, x_label="Score", title="", x_breaks=None):
+        """
+        Plots the density distribution of the scores with up to two threshold markers.
+        """
+        metrics_df = adata.obs
 
-        # 1. Prepare data and counts
-        df = self.adata.obs[[cell_type_key, col2, col3]].astype(str).copy()
+        # 1. Reverse sample order
+        samples = list(metrics_df['sample'].unique())[::-1] 
+        
+        # Dynamically scale height based on sample count
+        fig, ax = plt.subplots(figsize=(9, len(samples) * 0.7 + 1.5))
+        
+        # Generate a matching color palette
+        colors = sns.color_palette("husl", len(samples))
+        
+        overlap = 0.9  # Controls ridge height expansion
+        
+        # 2. Plot each sample ridge from top to bottom
+        for i, sample in enumerate(samples):
+            sample_metrics_df = metrics_df[metrics_df['sample'] == sample]
+            values = sample_metrics_df[value_col].dropna()
+            
+            if len(values) < 2: # Drop empty/insufficient data rows
+                continue
+                
+            # Extract the sample's unique cutoff values if the columns are provided and exist
+            cutoff_1 = sample_metrics_df[cutoff_col_1].iloc[0] if (cutoff_col_1 and cutoff_col_1 in sample_metrics_df.columns) else None
+            cutoff_2 = sample_metrics_df[cutoff_col_2].iloc[0] if (cutoff_col_2 and cutoff_col_2 in sample_metrics_df.columns) else None
+            
+            # Calculate Kernel Density Estimate (KDE)
+            kde = gaussian_kde(values)
+            x_eval = np.linspace(values.min(), values.max(), 500)
+            y_eval = kde(x_eval)
+            
+            # Normalize peak height to our strict overlap scale
+            if y_eval.max() > 0:
+                y_eval = (y_eval / y_eval.max()) * overlap
+                
+            # Establish this sample's integer Y-axis baseline
+            baseline = i
+            y_plot = y_eval + baseline
+            
+            # Set zorder so lower ridges beautifully mask/overlap upper ridges
+            current_zorder = len(samples) - i
+            
+            # Draw the ridge outline and colored fill
+            ax.plot(x_eval, y_plot, color='black', lw=1.5, zorder=current_zorder)
+            ax.fill_between(x_eval, baseline, y_plot, color=colors[i], alpha=0.8, zorder=current_zorder)
+            
+            # Draw the baseline segment under the ridge
+            ax.plot([x_eval.min(), x_eval.max()], [baseline, baseline], color='grey', lw=0.5, alpha=0.5, zorder=current_zorder)
+            
+            # 3. Draw the sample-specific cutoff segment lines
+            # First Cutoff (Solid Line)
+            if cutoff_1 is not None and x_eval.min() <= cutoff_1 <= x_eval.max():
+                ax.plot([cutoff_1, cutoff_1], [baseline, baseline + 0.45], color='black', lw=1.2, zorder=current_zorder + 1)
+                
+            # Second Cutoff (Dashed Line)
+            if cutoff_2 is not None and x_eval.min() <= cutoff_2 <= x_eval.max():
+                ax.plot([cutoff_2, cutoff_2], [baseline, baseline + 0.45], color='black', lw=1.2, linestyle='--', zorder=current_zorder + 1)
+
+        # 4. Themes & Customizations
+        ax.set_yticks(range(len(samples)))
+        ax.set_yticklabels(samples, fontweight='bold', fontsize=10)
+        ax.set_xlabel(x_label, fontweight='bold', fontsize=11, labelpad=10)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
+        
+        if x_breaks is not None:
+            ax.set_xticks(x_breaks)
+            ax.set_xlim(min(x_breaks), max(x_breaks))
+            
+        ax.grid(axis='x', color='grey', linestyle='-', alpha=0.2)
+        ax.grid(axis='y', color='grey', linestyle='-', alpha=0.4)
+
+        sns.despine(ax=ax, left=False)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return fig, ax
+
+
+def plot_alluvial(adata, cell_type_key='cell_type', col2='CNV_classif', col3='malignant_classif', 
+                  color_dict=None, figsize=(12, 6), gap_ratio=0, category_fontsize=10, 
+                  column_fontsize=9, ax=None):
+
+        df = adata.obs[[cell_type_key, col2, col3]].astype(str).copy()
         counts = df.groupby([cell_type_key, col2, col3]).size().reset_index(name='value')
         counts = counts[counts['value'] > 0]
         
-        # 2. Set up layout
-        fig, ax = plt.subplots(figsize=figsize)
+      
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+            show_plot = True
+        else:
+            show_plot = False
+
         box_width = 0.35 
         total_cells = counts['value'].sum()
         total_gap_budget = total_cells * gap_ratio
@@ -1576,22 +1573,22 @@ class MalignantClassifier:
                     node_ranks[i][val] = rank
                     y -= (count + col_gap)
 
-        # 4. Map ranks back to flows
         counts['rank1'] = counts[cell_type_key].map(node_ranks[0])
         counts['rank2'] = counts[col2].map(node_ranks[1])
         counts['rank3'] = counts[col3].map(node_ranks[2])
 
-        # 5. Bezier flow renderer
         def draw_flow(x0, x1, y0_top, y0_bot, y1_top, y1_bot, color):
             mid_x = (x0 + x1) / 2
             verts = [
                 (x0, y0_top), (mid_x, y0_top), (mid_x, y1_top), (x1, y1_top),
                 (x1, y1_bot), (mid_x, y1_bot), (mid_x, y0_bot), (x0, y0_bot), (x0, y0_top)
             ]
-            codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4, 
-                    Path.LINETO, Path.CURVE4, Path.CURVE4, Path.CURVE4, Path.CLOSEPOLY]
-            path = Path(verts, codes)
-            patch = patches.PathPatch(path, facecolor=color, lw=1, edgecolor='white', alpha=0.6, zorder=1)
+            codes = [
+                MplPath.MOVETO, MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4, 
+                MplPath.LINETO, MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4, MplPath.CLOSEPOLY]
+                
+            path = MplPath(verts, codes)
+            patch = patches.PathPatch(path, facecolor=color, lw=1, edgecolor='white', alpha=0.85, zorder=1)
             ax.add_patch(patch)
 
         if color_dict is None:
@@ -1602,7 +1599,6 @@ class MalignantClassifier:
                 'Unknown': '#A093C5'
             }
 
-        # 6. Draw Flows (Col 1 -> Col 2)
         counts_12 = counts.sort_values(by=['rank1', 'rank2', 'rank3'])
         for _, row in counts_12.iterrows():
             v1, v2, v3, val = row[cell_type_key], row[col2], row[col3], row['value']
@@ -1617,7 +1613,6 @@ class MalignantClassifier:
             
             draw_flow(0 + box_width/2, 1 - box_width/2, y0_top, y0_bot, y1_top, y1_bot, color_dict.get(v3, '#CCCCCC'))
 
-        # 7. Draw Flows (Col 2 -> Col 3)
         counts_23 = counts.sort_values(by=['rank2', 'rank1', 'rank3'])
         for _, row in counts_23.iterrows():
             v1, v2, v3, val = row[cell_type_key], row[col2], row[col3], row['value']
@@ -1632,7 +1627,6 @@ class MalignantClassifier:
             
             draw_flow(1 + box_width/2, 2 - box_width/2, y1_top, y1_bot, y2_top, y2_bot, color_dict.get(v3, '#CCCCCC'))
 
-        # 8. Draw Nodes with customizable label size
         for i, col in enumerate(cols):
             for val, dims in nodes[i].items():
                 rect = patches.Rectangle(
@@ -1647,7 +1641,6 @@ class MalignantClassifier:
                     fontsize=category_fontsize, zorder=11
                 )
 
-        # 9. Aesthetics
         max_height = total_cells + total_gap_budget
         ax.set_xlim(-0.5, 2.5)
         ax.set_ylim(-max_height - (total_gap_budget * 0.05), total_gap_budget * 0.05)
@@ -1663,7 +1656,7 @@ class MalignantClassifier:
             spine.set_visible(False)
 
         legend_elements = [
-            patches.Patch(facecolor=color, edgecolor='black', label=label, linewidth=0.75)
+            patches.Patch(facecolor=color, edgecolor='none', label=label, linewidth=0.75)
             for label, color in color_dict.items() if label in node_ranks[2]
         ]
         ax.legend(
@@ -1671,11 +1664,566 @@ class MalignantClassifier:
             ncol=4, frameon=False
         )
 
-        plt.tight_layout()
-        plt.show()
+        # Only execute tight_layout and show() if this function created the figure
+        if show_plot:
+            plt.tight_layout()
+            plt.show()
 
 
-def main(adata_path, cnv_scores, gene_annots, cell_annots, annot_mode, cell_of_origin, verbose=False):
+def final_classif_plot(adata, group_key='malignant_classif', cell_type_key='cell_type', color_dict=None, figsize=(16, 6), save_path=None):
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [1, 1.2]})
+
+    my_colors = {
+        'Malignant-high confidence': '#FA786D',
+        'Malignant-like': '#83B701',
+        'Normal': '#00C1CA',
+        'Unknown': '#C488FF'
+    }
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='malignant_classif',  
+        show=False,
+        size=10,
+        palette=my_colors,      
+        ax=ax1,          
+        frameon=True,
+        title='Final malignant classification',
+        legend_loc='none'
+    )
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=color, markeredgecolor='none', label=label, markersize=8)
+        for label, color in my_colors.items()
+    ]
+
+    ax1.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05),  # Positioned just below the x-axis
+        ncol=4,                        # Arrange legend items in columns
+        frameon=False                  # Remove border around legend
+    )
+
+    plot_alluvial(adata, cell_type_key='cell_type', ax=ax2)
+
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0.08)
+
+    plt.savefig("UMAP_malignant_classif.png", dpi=300, bbox_inches='tight')
+
+    logging.info("Final classification plot generated!")
+
+    plt.close(fig)
+
+
+def sort_chrom_arms(arms):
+    """
+    Helper function to sort chromosome arms numerically (1-22, X, Y)
+    and then by arm (p before q).
+    """
+    def parse_arm(arm):
+        # Match the numeric/letter part and the 'p' or 'q' part
+        match = re.match(r'^([0-9]+|[XYxy])([pq]?)$', str(arm))
+        if not match:
+            return (999, arm) # Fallback for unexpected formats
+        
+        chrom, arm_type = match.groups()
+        
+        # Map chromosomes to integers for proper sorting
+        if chrom.upper() == 'X':
+            chrom_val = 23
+        elif chrom.upper() == 'Y':
+            chrom_val = 24
+        else:
+            chrom_val = int(chrom)
+            
+        # Ensure 'p' comes before 'q'
+        arm_val = 0 if arm_type == 'p' else 1 if arm_type == 'q' else 2
+        
+        return (chrom_val, arm_val)
+        
+    return sorted(arms, key=parse_arm)
+
+
+def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms", outdir=None):
+
+    # Determine the categories to split by
+    if split_by is not None:
+        splits = adata.obs[split_by].dropna().unique()
+    else:
+        splits = [None]
+        
+    n_splits = len(splits)
+    
+    # Pre-calculate matrices and track global min/max
+    plot_data = []
+    total_groups = 0
+    
+    global_min = float('inf')
+    global_max = float('-inf')
+    
+    for split in splits:
+        if split is not None:
+            # Subset the observation dataframe and the matrix for the current split
+            mask = adata.obs[split_by] == split
+            sub_obs = adata.obs[mask]
+            sub_mat = adata.obsm[use_rep][mask]
+        else:
+            sub_obs = adata.obs
+            sub_mat = adata.obsm[use_rep]
+            
+        summarised_mat = sub_mat.groupby(sub_obs[groupby], sort=False).mean()
+        
+        # ---> FIX: Reorder the columns (chromosome arms) here <---
+        sorted_columns = sort_chrom_arms(summarised_mat.columns)
+        summarised_mat = summarised_mat[sorted_columns]
+        
+        # Track the minimum and maximum values across all splits
+        global_min = min(global_min, summarised_mat.values.min())
+        global_max = max(global_max, summarised_mat.values.max())
+        
+        plot_data.append((split, summarised_mat))
+        total_groups += summarised_mat.shape[0]
+
+    # Calculate symmetrical limits for the diverging colormap centered at 0
+    max_abs = max(abs(global_min), abs(global_max))
+    v_min = -max_abs
+    v_max = max_abs
+
+    # Create vertically stacked subplots 
+    # Height is based on total groups plus padding for spacing/titles
+    fig_height = (0.7 * total_groups) + (1 * n_splits)
+
+    fig, axes = plt.subplots(nrows=n_splits, ncols=1, figsize=(14, fig_height))
+    
+    # Ensure axes is always iterable (in case of a single plot)
+    if n_splits == 1:
+        axes = [axes]
+        
+    # Plot each heatmap
+    for ax, (split_name, summarised_mat) in zip(axes, plot_data):
+        sns.heatmap(
+            summarised_mat,
+            cmap="RdBu_r",
+            center=0,
+            vmin=v_min,       
+            vmax=v_max,         
+            annot=False,
+            linewidths=0.5,      
+            linecolor="black",   
+            cbar_kws={"shrink": 0.8, "pad": 0.02},
+            ax=ax
+        )
+
+        # Axis label styling
+        ax.tick_params(axis='x', labelsize=10, rotation=90)
+        ax.tick_params(axis='y', labelsize=12)
+        ax.set_ylabel("")
+        
+        # Add a title for the split category
+        if split_name is not None:
+            ax.set_title(f"{split_by}: {split_name}", fontsize=14, pad=10)
+
+        # Colorbar tick styling
+        cbar = ax.collections[0].colorbar
+        if cbar:
+            cbar.ax.tick_params(labelsize=10)
+
+    plt.tight_layout()
+
+    plt.savefig('CNV_heatmap.png', dpi=300, bbox_inches="tight")
+    logger.info('CNV summary heatmap saved!')
+
+    plt.close(fig)
+
+
+def plot_report_01(adata, cell_type_key, sample_key):
+
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+
+    # -------- cell types UMAP -------------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color=cell_type_key,  
+        show=False,
+        size=10,     
+        ax=ax1,          
+        frameon=True,
+        title='Cell type',
+        legend_loc='none'
+    )
+
+    ax1.set_title('Cell type', fontweight='bold', fontsize=16)
+
+    cell_types = adata.obs[cell_type_key].cat.categories
+    colors = adata.uns['cell_type_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(cell_types, colors)
+    ]
+
+    ax1.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=12                 
+    )
+
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+
+    # -------- samples UMAP -------------
+    adata.obs[sample_key] = adata.obs[sample_key].astype('category')
+
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color=sample_key,  
+        show=False,
+        size=10,    
+        ax=ax2,          
+        frameon=True,
+        title='Sample'
+        )
+
+    ax2.set_title('Sample', fontweight='bold', fontsize=16)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+
+    ax2.legend(fontsize=12, bbox_to_anchor=(1, 0.7), ncol=1, frameon=False)
+
+
+    # -------- reference UMAP -------------
+
+    adata.obs['reference_group'] = (adata.obs['reference'].map({True: 'Reference', False: 'Query', 'True': 'Reference', 'False': 'Query'})
+        .astype('category')
+    )
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='reference_group',  
+        show=False,
+        size=10,    
+        ax=ax3,          
+        frameon=True,
+        legend_loc='none'
+        )
+
+    ax3.set_title('swiftCNV groups', fontweight='bold', fontsize=16)
+
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+
+    references = adata.obs['reference_group'].cat.categories
+    colors = adata.uns['reference_group_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(references, colors)
+    ]
+
+    ax3.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                        
+        frameon=False,                  
+        fontsize=12
+    )
+
+    # -------- Number of query cells --------
+    sample_query_counts = adata.obs.loc[adata.obs['reference_group'] == 'Query', 'sample'].value_counts().reset_index()
+
+    sample_query_counts.columns = ['sample', 'count']
+    sns.barplot(
+        data=sample_query_counts, 
+        x='sample', 
+        y='count', 
+        ax=ax4,
+        width= 0.9,
+        edgecolor='black', 
+        linewidth=0.8
+    )
+
+    n_categories = len(sample_query_counts)
+    ax4.set_xlim(-0.6, n_categories - 0.3)
+
+    # 3. Clean up aesthetics to match your UMAP style
+    ax4.set_title('No. of swiftCNV query cells', fontweight='bold', fontsize=16, pad=9)
+    ax4.set_xlabel('Sample', fontweight='bold',labelpad=10, fontsize=12)
+    ax4.set_ylabel('Counts', fontweight='bold',labelpad=10, fontsize=12)
+
+    ax4.tick_params(axis='y', labelsize=11)
+    ax4.tick_params(axis='x', labelsize=12, rotation=45)
+
+
+    ax4.spines['top'].set_visible(True)
+    ax4.spines['right'].set_visible(True)
+
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0.2, hspace=0.3)
+
+    return fig
+        
+
+def plot_report_02(adata, cell_type_key):
+
+    fig = plt.figure(figsize=(15, 12))
+    gs = GridSpec(2, 2, figure=fig)
+
+    ax1 = fig.add_subplot(gs[0, :])  
+    ax3 = fig.add_subplot(gs[1, 0])  
+    ax4 = fig.add_subplot(gs[1, 1])
+
+    # ---- 1. Malignant score ridges (ax1) ----------
+    plot_density_ridges(
+        adata, 
+        value_col='malignant_score', 
+        cutoff_col_1='malignant_cutoff_real', 
+        cutoff_col_2='malignant_cutoff_strict', 
+        x_label='Malignant Score',
+        ax=ax1 
+    )
+
+    # -------- cell types UMAP (ax3) -------------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color=cell_type_key,  
+        show=False,
+        size=10,     
+        ax=ax3,          
+        frameon=True,
+        title='Cell type',
+        legend_loc='none'
+    )
+
+    ax3.set_title('Cell type', fontweight='bold', fontsize=16, pad= 12)
+
+    cell_types = adata.obs[cell_type_key].cat.categories
+    colors = adata.uns['cell_type_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(cell_types, colors)
+    ]
+
+    ax3.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=12                 
+    )
+
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+
+
+    # ---- Malignant score UMAP (ax4) ----------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='malignant_score',  
+        show=False,
+        size=15,           
+        frameon=True,
+        ax=ax4 
+    )
+
+    ax4.set_title('Malignant score', fontweight='bold', fontsize=16, pad= 12)
+    ax4.spines['top'].set_visible(False)
+    ax4.spines['right'].set_visible(False)
+
+
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0.2, hspace=0.3)
+
+    return fig
+
+
+def plot_report_03(adata):
+
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+
+    my_colors = {
+        'Malignant-high confidence': '#FA786D',
+        'Malignant-like': '#83B701',
+        'Normal': '#00C1CA',
+        'Unknown': '#C488FF'
+    }
+
+    # -------- CNV classification UMAP -------------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='CNV_classif',  
+        show=False,
+        size=30,     
+        ax=ax1,
+        palette=my_colors,         
+        frameon=True,
+        title='CNV classification',
+        legend_loc='none'
+    )
+
+    ax1.set_title('CNV classification', fontweight='bold', fontsize=16)
+
+    CNV_types = adata.obs['CNV_classif'].cat.categories
+    colors = adata.uns['CNV_classif_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(CNV_types, colors)
+    ]
+
+    ax1.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=12                 
+    )
+
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+
+    # -------- KNN classification UMAP -------------
+    adata.obs['knn_classif'] = adata.obs['knn_classif'].astype('category')
+
+    knn_colors = {'Normal': '#00C1CA', 'Malignant':'#FA786D'}
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='knn_classif',  
+        show=False,
+        size=30,    
+        ax=ax2,
+        palette=knn_colors,           
+        frameon=True
+        )
+
+    ax2.set_title('KNN classification', fontweight='bold', fontsize=16)
+
+    KNN_types = adata.obs['knn_classif'].cat.categories
+    colors = adata.uns['knn_classif_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(KNN_types, colors)
+    ]
+
+    ax2.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=12                 
+    )
+
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+
+
+    # -------- DBSCAN outliers UMAP -------------
+
+    adata.obs['dbscan_outlier'] = (adata.obs['dbscan_outlier'].map({True: 'Outlier', False: 'Normal'})
+        .astype('category')
+    )
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='dbscan_outlier',  
+        show=False,
+        size=30,           
+        frameon=True,
+        groups=['Outlier'],
+        palette={'Outlier': 'black', 'Normal': 'lightgray'},
+        ax=ax3
+        )
+
+    ax3.set_title('dbscan_outlier', fontweight='bold', fontsize=16)
+
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+
+    references = adata.obs['dbscan_outlier'].cat.categories
+    colors = adata.uns['dbscan_outlier_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(references, colors)
+    ]
+
+    ax3.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                        
+        frameon=False,                  
+        fontsize=12
+    )
+
+    # -------- Final malignant classification --------
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='malignant_classif',  
+        show=False,
+        size=30,    
+        ax=ax4,
+        palette=my_colors,        
+        frameon=True,
+        legend_loc='none'
+        )
+
+    ax4.set_title('malignant_classif', fontweight='bold', fontsize=16)
+
+    ax4.spines['top'].set_visible(False)
+    ax4.spines['right'].set_visible(False)
+
+    references = adata.obs['malignant_classif'].cat.categories
+    colors = adata.uns['malignant_classif_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(references, colors)
+    ]
+
+    ax4.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=2,                        
+        frameon=False,                  
+        fontsize=12
+    )
+
+    plt.tight_layout()
+    plt.subplots_adjust(wspace=0.2, hspace=0.3)
+
+    return fig
+        
+
+def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_annots, annot_mode, cell_of_origin, dataset, verbose=False):
 
     adata = sc.read_h5ad(adata_path)
 
@@ -1683,7 +2231,7 @@ def main(adata_path, cnv_scores, gene_annots, cell_annots, annot_mode, cell_of_o
 
     summarise_by_chr_arm(adata)
 
-    classifier = MalignantClassifier(adata, annot_mode=annot_mode, cell_of_origin= cell_of_origin, verbose=verbose)
+    classifier = MalignantClassifier(adata, sample_key= sample_key, cell_type_key= cell_type_key, annot_mode=annot_mode, cell_of_origin= cell_of_origin, verbose=verbose)
 
     classifier.get_corr_scores(n_jobs=-1)
 
@@ -1692,6 +2240,47 @@ def main(adata_path, cnv_scores, gene_annots, cell_annots, annot_mode, cell_of_o
     classifier.knn_malignant_classification(embedding_key='X_pca')
 
     classifier.final_classification()
+
+    classifier.adata.write(f"{dataset}_classif.h5ad")
+
+    # ------ Plots --------------
+
+    # Hotspot arms report
+    classifier.plot_cnv_chr_arms_pdf()
+
+    # Final classification
+    final_classif_plot(classifier.adata)
+
+    # Summary CNV heatmap with only malignant cells
+    adata_malig = classifier.adata[classifier.adata.obs['malignant_classif'].isin(['Malignant-high confidence', 'Malignant-like'])].copy()
+
+    plot_cnv_summary(adata_malig, groupby=sample_key, use_rep='cnv_mat_arms')
+    del adata_malig
+
+
+    # Metrics plots
+    if annot_mode == 'annotation': 
+        filename = "annot_metrics_plots.pdf"
+    else:
+        filename = "reannot_metrics_plots.pdf"
+
+    with PdfPages(filename) as pdf:
+        # --- PAGE 1 ---
+        fig1 = plot_report_01(classifier.adata, cell_type_key, sample_key)
+        pdf.savefig(fig1, bbox_inches='tight')
+        plt.close(fig1)
+        
+        # --- PAGE 2 ---
+        fig2 = plot_report_02(classifier.adata, cell_type_key)
+        pdf.savefig(fig2, bbox_inches='tight')
+        plt.close(fig2)
+
+        # --- PAGE 2 ---
+        fig3 = plot_report_03(classifier.adata)
+        pdf.savefig(fig3, bbox_inches='tight')
+        plt.close(fig3)
+
+
 
 if __name__ == "__main__":
 
@@ -1704,14 +2293,18 @@ if __name__ == "__main__":
     parser.add_argument('--cell_of_origin', required=True, help='Cell type(s) of tumor origin.')
     parser.add_argument('s','--sample_key', required=True, help='Column in adata.obs with sample information.')
     parser.add_argument('c','--cell_type_key', required=True, help='Column in adata.obs with cell type labels.')
+    parser.add_argument('d','--dataset', required=True, help='Name of the dataset.')
 
     args = parser.parse_args()
 
     main(
-        args.adata_path,
-        args.infercnv_out,
-        args.annot_mode,
-        args.cell_of_origin,
-        args.sample_key,
-        args.cell_type_key
+        adata_path= args.adata_path,
+        cnv_scores= args.cnv_scores,
+        gene_annots= args.gene_annots,
+        cell_annots= args.cell_annots,
+        annot_mode=args.annot_mode,
+        cell_of_origin= args.cell_of_origin,
+        sample_key= args.sample_key,
+        cell_type_key= args.cell_type_key,
+        dataset= args.dataset
     )

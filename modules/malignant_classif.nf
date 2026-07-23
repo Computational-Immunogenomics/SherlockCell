@@ -27,7 +27,7 @@ process malignant_classif{
         tuple val(dataset), path("reannot_metrics_plots.pdf"), emit: metric_plots
         tuple val(dataset), path("boxplots_cnv_chrArms.pdf"), emit: boxplots
         tuple val(dataset), path("CNV_heatmap.pdf"), emit: cnv_summary_heatmap
-        tuple val(dataset), path("Cells.csv"), emit: cells_reannot
+        tuple val(dataset), path("${dataset}_classif.h5ad"), emit: adata
 
     script:
         def origin_flag = cell_origin ? "--cell_of_origin '${cell_origin}'" : ""
@@ -43,7 +43,8 @@ process malignant_classif{
             ${origin_flag} \\
             -g "${gene_annots}" \\
             -n "${cell_annots}" \\
-            --annot_mode "${annot_mode}"
+            --annot_mode "${annot_mode}" \\
+            -d "${dataset}"
     
         """
 
