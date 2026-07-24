@@ -20,7 +20,7 @@ process swiftCNV{
 
     
     input:
-        tuple val(dataset), path(data_dir), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(annot_mode), path(cell_annots), val(num_cells), path(anndata)
+        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(annot_mode), path(cell_annots), val(num_cells), path(anndata)
         path gene_annots
         val hmm
         val plot
@@ -43,14 +43,14 @@ process swiftCNV{
         echo "${out_dir}" > .task_outdir
 
         inferCNVpy ${args} \\
-          -i ${anndata} \\
-          -a ${cell_annots} \\
+          -i ${adata_path} \\
+          --reference ${cell_annots}
           -o . \\
           --gtf-path ${gene_annots} \\
-          -r Normal \\
+          --sample-col ${sample_key} \\
+          --exclude-immune \\
           ${hmm_arg} \\
           ${plot_arg} \\
-          --exclude-immune
         """
 
 }

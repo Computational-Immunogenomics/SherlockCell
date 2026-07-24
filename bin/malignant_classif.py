@@ -7,20 +7,26 @@ import pandas as pd
 import numpy as np
 import scanpy as sc
 import anndata as ad
+import seaborn as sns
 from pathlib import Path
 from datetime import datetime
 from scipy.stats import median_abs_deviation, gaussian_kde
 from scipy.signal import find_peaks
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from matplotlib.patches import Rectangle
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import matplotlib.patches as patches
 from matplotlib.path import Path as MplPath
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
-
-
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+import matplotlib.colors as mcolors
+from scipy.spatial.distance import pdist
+from scipy.cluster.hierarchy import linkage, dendrogram, leaves_list
+from collections import Counter
+from sklearn.cluster import DBSCAN
+from kneed import KneeLocator
 
 
 def _add_mat_to_adata(adata, matrix, genes, cells, key_added='cnv_mat'):
@@ -176,14 +182,6 @@ class MalignantClassifier:
                 )
         else:
             raise ValueError("Invalid annot mode, please choose a value between 'annotation' or 're-annotation'.")
-
-                
-        logger = logging.getLogger()
-        
-        if self.verbose:
-            logger.setLevel(logging.INFO)
-        else:
-            logger.setLevel(logging.WARNING)
 
     
     @staticmethod
@@ -1838,7 +1836,7 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
     plt.tight_layout()
 
     plt.savefig('CNV_heatmap.png', dpi=300, bbox_inches="tight")
-    logger.info('CNV summary heatmap saved!')
+    logging.info('CNV summary heatmap saved!')
 
     plt.close(fig)
 
@@ -2223,7 +2221,384 @@ def plot_report_03(adata):
     return fig
         
 
+def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms", 
+    color_by=None, split_by="malignant_classif", continuous_var="malignant_score",
+    legend_titles=None, highlight_arms=None, cluster_cells=True, figsize=(20, 12), 
+    cmap="RdBu_r", score_cmap="Reds", vmin=None, vmax=None, vcenter=0, threads=-1,
+    save_pdf=None): 
+
+    logging.info(">> Plotting a CNV Heatmap by Sample...")
+
+    if isinstance(color_by, str):
+        color_vars = [color_by]
+    elif isinstance(color_by, (list, tuple)):
+        color_vars = list(color_by)
+    else:
+        color_vars = []
+        
+    if legend_titles is None:
+        legend_titles = {}
+        
+    if highlight_arms is None:
+        highlight_arms = {}
+
+    # Prevent continuous variables from being treated as categorical
+    if continuous_var in color_vars:
+        color_vars.remove(continuous_var)
+
+    unique_samples = adata.obs[group_key].unique()
+    
+    # Custom color mappings for categorical variables
+    my_colors = {
+        'Malignant-high confidence': '#cd5555',
+        'Malignant-like': '#ee9572',
+        'Normal': '#b2dfee',
+        'Unknown': '#b3b3b3'
+    }
+    knn_colors = {'Normal': '#b2dfee', 'Malignant': '#cd5555'}
+    
+    # Initialize PDF object if saving
+    pdf = PdfPages(save_pdf) if save_pdf else None 
+    
+    for sample in unique_samples:
+        
+        # 1. Subset the main anndata object
+        sample_adata = adata[adata.obs[group_key] == sample].copy()
+        
+        if cnv_key in sample_adata.obsm:
+            nested_cnv = sample_adata.obsm[cnv_key]
+            if isinstance(nested_cnv, pd.DataFrame):
+                sample_adata.obsm[cnv_key] = nested_cnv.loc[sample_adata.obs_names].copy()
+            else:
+                sample_adata.obsm[cnv_key] = nested_cnv[sample_adata.obs_names].copy()
+        else:
+            raise KeyError(f"'{cnv_key}' not found in adata.obsm for sample '{sample}'.")
+ 
+        # 2. Extract matrix & chromosome metadata
+        cnv_adata = sample_adata.obsm[cnv_key]
+        mat = cnv_adata.values
+        if sp.issparse(mat):
+            mat = mat.toarray()
+
+        chromosomes = sort_chrom_arms(cnv_adata.columns)
+        n_total_cells = len(sample_adata)
+
+        # Get highlighted arms for this specific sample
+        sample_marked_arms = highlight_arms.get(sample, [])
+
+        # 3. Continuous variable setup (CUSTOM HALF-WHITE / HALF-REDS COLORMAP)
+        has_continuous = (continuous_var is not None) and (continuous_var in sample_adata.obs.columns)
+        if has_continuous:
+            score_vals_all = sample_adata.obs[continuous_var].values.astype(float)
+            score_vmin = 0.0
+            score_vmax = max(1.0, np.nanmax(score_vals_all))
+            
+            score_norm = mcolors.Normalize(vmin=score_vmin, vmax=score_vmax)
+            
+            base_cm = plt.colormaps[score_cmap] if isinstance(score_cmap, str) else score_cmap
+            n_samples = 256
+            half_n = n_samples // 2
+            
+            white_part = np.tile(np.array([1.0, 1.0, 1.0, 1.0]), (half_n, 1))
+            reds_part = base_cm(np.linspace(0.0, 1.0, n_samples - half_n))
+            
+            score_cm = mcolors.ListedColormap(np.vstack((white_part, reds_part)), name="WhiteToReds")
+
+        # 4. Group and Cluster ALL cells based on split_by
+        cell_groups = {}
+        if split_by and split_by in sample_adata.obs.columns:
+            raw_vals = sample_adata.obs[split_by].values
+            present_vals = [v for v in pd.unique(raw_vals) if pd.notna(v)]
+            
+            if split_by in ['CNV_classif', 'malignant_classif']:
+                desired_order = ['Normal', 'Malignant-high confidence', 'Malignant-like', 'Unknown']
+                unique_splits = [k for k in desired_order if k in present_vals]
+                unique_splits += [v for v in present_vals if v not in unique_splits]
+            elif split_by == 'knn_classif':
+                unique_splits = [k for k in knn_colors.keys() if k in present_vals]
+                unique_splits += [v for v in present_vals if v not in unique_splits]
+            else:
+                unique_splits = sorted(present_vals)
+            
+            for val in unique_splits:
+                group_mask = raw_vals == val
+                group_idx = np.where(group_mask)[0]
+                if len(group_idx) == 0:
+                    continue
+                group_mat = mat[group_idx, :]
+                
+                if cluster_cells and len(group_idx) > 1:
+                    order, _ = _cluster_cells(group_mat, threads=threads)
+                else:
+                    order = np.arange(len(group_idx))
+                    
+                cell_groups[val] = {
+                    'mat': group_mat[order, :],
+                    'rows': group_idx[order]
+                }
+        else:
+            all_idx = np.arange(n_total_cells)
+            if cluster_cells and len(all_idx) > 1:
+                order, _ = _cluster_cells(mat, threads=threads)
+            else:
+                order = all_idx
+            cell_groups['All Cells'] = {
+                'mat': mat[order, :],
+                'rows': all_idx[order]
+            }
+
+        # 5. Global Color Palette Setup
+        palettes = ["Set3", "tab20", 'Paired'] 
+        all_legends_data = []
+        global_group_colors = {}
+
+        if color_vars:
+            for idx, var in enumerate(color_vars):
+                if var not in sample_adata.obs.columns:
+                    continue # Skip missing columns defensively
+                    
+                unique_vals = sorted([v for v in pd.unique(sample_adata.obs[var]) if pd.notna(v)])
+                has_nan = sample_adata.obs[var].isna().any()
+                
+                if var in ['CNV_classif', 'malignant_classif']:
+                    group_to_color = {g: mcolors.to_rgba(my_colors.get(g, '#CCCCCC')) for g in unique_vals}
+                elif var == 'knn_classif':
+                    group_to_color = {g: mcolors.to_rgba(knn_colors.get(g, '#CCCCCC')) for g in unique_vals}
+                else:
+                    cat_cmap = plt.colormaps[palettes[idx % len(palettes)]]
+                    group_to_color = {g: cat_cmap(i % len(cat_cmap.colors)) for i, g in enumerate(unique_vals)}
+                
+                if has_nan:
+                    group_to_color['nan'] = mcolors.to_rgba('#D3D3D3')
+                    if 'nan' not in unique_vals:
+                        unique_vals.append('nan')
+                
+                global_group_colors[var] = group_to_color
+                handles = [Patch(color=group_to_color[g], label=str(g)) for g in unique_vals]
+                
+                display_title = legend_titles.get(var, var)
+                all_legends_data.append((handles, display_title))
+
+        # Heatmap color scale limits
+        if vmin is None or vmax is None:
+            p1, p99 = np.percentile(mat.ravel(), [1, 99])
+            auto_lim = max(abs(p1), abs(p99))
+            auto_lim = max(auto_lim, 0.05)
+            vmin, vmax = -auto_lim, auto_lim
+
+        # 6. Build Dynamic GridSpec Layout
+        split_gap_height = max(1, int(0.008 * n_total_cells)) 
+        chr_height = max(1, int(0.03 * n_total_cells))
+
+        height_ratios = []
+        group_keys = list(cell_groups.keys())
+        for i, val in enumerate(group_keys):
+            height_ratios.append(len(cell_groups[val]['rows']))
+            if i < len(group_keys) - 1:
+                height_ratios.append(split_gap_height)
+                
+        height_ratios.append(chr_height)
+        n_rows = len(height_ratios)
+
+        if has_continuous:
+            width_ratios = [5, 0.15, 45, 0.15, 1, 1, 10] 
+            col_left_sbar = 0
+            col_heatmap = 2
+            col_right_sbar = 4
+            col_right_panel = 6
+        else:
+            width_ratios = [5, 0.15, 45, 1, 10]
+            col_left_sbar = 0
+            col_heatmap = 2
+            col_right_sbar = None
+            col_right_panel = 4
+
+        fig = plt.figure(figsize=figsize)
+        gs = GridSpec(
+            n_rows, len(width_ratios), hspace=0.005, wspace=0.005,
+            height_ratios=height_ratios, width_ratios=width_ratios
+        )
+
+        norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+        
+        # 7. Render Sub-Heatmaps for each classification split
+        curr_row = 0
+        unique_chroms = np.unique(chromosomes)
+        chrom_to_int = {c: i for i, c in enumerate(unique_chroms)}
+        chrom_ints = np.array([chrom_to_int[c] for c in chromosomes])
+
+        for i, val in enumerate(group_keys):
+            g_data = cell_groups[val]
+            n_group_cells = len(g_data['rows'])
+            
+            # Main CNV Heatmap
+            ax_obs = fig.add_subplot(gs[curr_row, col_heatmap])
+            im = ax_obs.imshow(g_data['mat'], aspect="auto", cmap=cmap, norm=norm, interpolation="none")
+            ax_obs.set_xticks([]); ax_obs.set_yticks([])
+
+            # Categorical Left Sidebars
+            if color_vars:
+                gs_obs_sbar = GridSpecFromSubplotSpec(1, len(color_vars), subplot_spec=gs[curr_row, col_left_sbar], wspace=0.15)
+                for c_idx, var in enumerate(color_vars):
+                    if var not in global_group_colors: continue # Skip if skipped above
+                    
+                    ax_obs_var = fig.add_subplot(gs_obs_sbar[0, c_idx])
+                    obs_c_mat = np.zeros((n_group_cells, 1, 4))
+                    var_vals = sample_adata.obs[var].values[g_data['rows']]
+                    
+                    for r_idx, v in enumerate(var_vals):
+                        lookup_v = 'nan' if pd.isna(v) else v
+                        obs_c_mat[r_idx, 0, :] = global_group_colors[var].get(lookup_v, mcolors.to_rgba('#CCCCCC'))
+                    
+                    ax_obs_var.imshow(obs_c_mat, aspect="auto", interpolation="none")
+                    ax_obs_var.set_yticks([])
+                    
+                    if i == len(group_keys) - 1:
+                        ax_obs_var.set_xticks([0])
+                        display_title = legend_titles.get(var, var)
+                        ax_obs_var.set_xticklabels([display_title], rotation=90, ha="center", va="top", fontsize=9)
+                        ax_obs_var.tick_params(axis="x", length=0, pad=2)
+                    else:
+                        ax_obs_var.set_xticks([])
+
+                    for spine in ax_obs_var.spines.values():
+                        spine.set_visible(True); spine.set_color("black"); spine.set_linewidth(1.0)
+
+            # Continuous Right Sidebar
+            if has_continuous:
+                ax_score_sbar = fig.add_subplot(gs[curr_row, col_right_sbar])
+                group_scores = sample_adata.obs[continuous_var].values[g_data['rows']].astype(float)
+                
+                score_rgba = np.zeros((n_group_cells, 1, 4))
+                for r_idx, s_val in enumerate(group_scores):
+                    if pd.isna(s_val):
+                        score_rgba[r_idx, 0, :] = mcolors.to_rgba('#CCCCCC')
+                    else:
+                        score_rgba[r_idx, 0, :] = score_cm(score_norm(s_val))
+                        
+                ax_score_sbar.imshow(score_rgba, aspect="auto", interpolation="none")
+                ax_score_sbar.set_yticks([])
+                ax_score_sbar.set_xticks([])
+
+                for spine in ax_score_sbar.spines.values():
+                    spine.set_visible(True); spine.set_color("black"); spine.set_linewidth(1.0)
+            
+            # Chromosome boundary lines
+            for b in range(1, len(chromosomes)):
+                if chromosomes[b].replace("chr", "")[:-1] != chromosomes[b - 1].replace("chr", "")[:-1]:
+                    ax_obs.axvline(b - 0.5, color="#121212", linewidth=1.25, alpha=0.8, zorder=5)
+                else:
+                    ax_obs.axvline(b - 0.5, color="#333333", linewidth=1.0, alpha=0.8, zorder=5)
+                    
+            curr_row += 2
+
+        # 8. Chromosome Track at bottom
+        chr_row_idx = n_rows - 1
+        ax_chr = fig.add_subplot(gs[chr_row_idx, col_heatmap])
+        ax_chr.set_xlim(-0.5, len(chromosomes) - 0.5)
+        ax_chr.set_ylim(-0.5, 0.5)
+        ax_chr.axis("off")
+
+        for chrom in unique_chroms:
+            positions = np.where(chrom_ints == chrom_to_int[chrom])[0]
+            mid = positions[len(positions) // 2]
+            chrom_label = chrom.replace("chr", "").replace("M", "")
+            
+            # Check if this arm/chromosome is marked
+            is_marked = (chrom in sample_marked_arms or 
+                         chrom.replace("chr", "") in sample_marked_arms or 
+                         chrom_label in sample_marked_arms)
+            
+            font_weight = "bold" if is_marked else "normal"
+            
+            ax_chr.text(
+                mid, 0.3, chrom_label, ha="center", va="top", rotation=90, 
+                fontsize=11, fontweight=font_weight
+            )
+
+        # 9. Legends and Colorbars Panel
+        heatmap_span_rows = chr_row_idx
+        
+        gs_right = GridSpecFromSubplotSpec(
+            2, 1, 
+            subplot_spec=gs[0:heatmap_span_rows, col_right_panel], 
+            height_ratios=[1.2, 3.8],
+            hspace=0.04
+        )
+        
+        # Colorbars
+        if has_continuous:
+            gs_cbars_outer = GridSpecFromSubplotSpec(1, 2, subplot_spec=gs_right[0, 0], width_ratios=[1.5, 8.5])
+            gs_cbars = GridSpecFromSubplotSpec(2, 1, subplot_spec=gs_cbars_outer[0, 0], height_ratios=[1, 1], hspace=0.45)
+            
+            # CNV values Colorbar
+            ax_cbar1 = fig.add_subplot(gs_cbars[0, 0])
+            fig.colorbar(im, cax=ax_cbar1)
+            ax_cbar1.set_title("CNV values", fontsize=11, pad=4, loc="left")
+            ax_cbar1.tick_params(labelsize=8)
+            ax_cbar1.yaxis.set_ticks_position("right")
+
+            # Continuous Score Colorbar 
+            ax_cbar2 = fig.add_subplot(gs_cbars[1, 0])
+            sm = plt.cm.ScalarMappable(cmap=score_cm, norm=score_norm)
+            sm.set_array([])
+            fig.colorbar(sm, cax=ax_cbar2)
+            cbar_title = legend_titles.get(continuous_var, continuous_var)
+            ax_cbar2.set_title(cbar_title, fontsize=11, pad=4, loc="left")
+            ax_cbar2.tick_params(labelsize=8)
+            ax_cbar2.yaxis.set_ticks_position("right")
+        else:
+            gs_cbar = GridSpecFromSubplotSpec(1, 2, subplot_spec=gs_right[0, 0], width_ratios=[1.2, 8.8])
+            ax_cbar = fig.add_subplot(gs_cbar[0, 0])
+            fig.colorbar(im, cax=ax_cbar)
+            ax_cbar.set_title("CNV values", fontsize=9, pad=3, loc="left")
+            ax_cbar.tick_params(labelsize=8)
+            ax_cbar.yaxis.set_ticks_position("right")
+
+        # Categorical Legends
+        ax_leg = fig.add_subplot(gs_right[1, 0])
+        ax_leg.axis("off")
+
+        leg_y = 1.0 
+        for idx, (handles, var_title) in enumerate(all_legends_data):
+            leg = ax_leg.legend(
+                handles=handles, title=var_title, loc="upper left", bbox_to_anchor=(0.0, leg_y),
+                ncol=1, fontsize=10, title_fontsize=11, frameon=False,
+                handlelength=1.0, handleheight=1.0, columnspacing=0.8,
+                labelspacing=0.4, borderpad=0.1, handletextpad=0.3, borderaxespad=0.0
+            )
+            
+            leg._legend_box.align = "left" 
+            
+            ax_leg.add_artist(leg)
+            leg_y -= (len(handles) * 0.035) + 0.06
+
+        fig.suptitle(f"Sample: {sample} | {n_total_cells} cells", fontsize=13, y=0.90)
+ 
+        if pdf:
+            pdf.savefig(fig, bbox_inches='tight', pad_inches=0.5)
+        else:
+            plt.show()
+            
+        plt.close(fig)
+
+    # Close PDF object after the loop finishes
+    if pdf:
+        pdf.close()
+
+    logging.info(">> CNV Heatmap by Sample succesfully generated!")
+
+
 def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_annots, annot_mode, cell_of_origin, dataset, verbose=False):
+
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
 
     adata = sc.read_h5ad(adata_path)
 
@@ -2280,7 +2655,22 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
         pdf.savefig(fig3, bbox_inches='tight')
         plt.close(fig3)
 
+    logging.info(">> Metrics report generated!")
 
+
+    # CNV heatmaps by sample
+    hotspotarms_dict = (classifier.master_hotspotarms_df.loc[classifier.master_hotspotarms_df['hotspotarm'] == 'Yes']
+        .groupby('sample')['chrarms']
+        .agg(lambda x: sorted(x.unique()))
+        .to_dict()
+)
+    titles_dict = {'cell_type': 'Cell type', 'knn_classif': 'KNN classif.', 'CNV_classif': 'CNV classif.', 'CNV_values': 'CNV values', 'malignant_score': 'Malignant score', 'malignant_classif': 'Malignant classif.' }
+
+    plot_cnv_by_sample(classifier.adata, group_key=sample_key, color_by=['malignant_score', 'cell_type', 'CNV_classif', 'knn_classif', 'malignant_classif'], split_by='malignant_classif', continuous_var="malignant_score",
+                    legend_titles=titles_dict, highlight_arms= hotspotarms_dict, save_pdf="CNV_heatmaps_samples.pdf")
+
+
+    logging.info(">> Malignant classifier finished!")
 
 if __name__ == "__main__":
 

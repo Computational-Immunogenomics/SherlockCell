@@ -50,7 +50,7 @@ workflow {
 
 
     swiftCNV(
-        ch_swiftCNV_input,  
+        ch_swiftCNV_input,
         gene_annots_file, 
         params.swiftCNV.HMM,
         params.swiftCNV.plot_cnv
