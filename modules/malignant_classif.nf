@@ -26,7 +26,8 @@ process malignant_classif{
         tuple val(dataset), path("UMAP_malignant_classif.png"), emit: umap_classif
         tuple val(dataset), path("reannot_metrics_plots.pdf"), emit: metric_plots
         tuple val(dataset), path("boxplots_cnv_chrArms.pdf"), emit: boxplots
-        tuple val(dataset), path("CNV_heatmap.pdf"), emit: cnv_summary_heatmap
+        tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmap_sample
+        tuple val(dataset), path("CNV_heatmap.png"), emit: cnv_summary_heatmap
         tuple val(dataset), path("${dataset}_classif.h5ad"), emit: adata
 
     script:

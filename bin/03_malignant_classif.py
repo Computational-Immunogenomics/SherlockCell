@@ -284,8 +284,8 @@ class MalignantClassifier:
         peak_y = peak_y[valid_peaks]
         
         if len(peak_x) < 2:
-            logging.warning(f"Warning: could not find two distinct valid peaks in ({sample_id}). Returning 0.5")
-            return 0.5
+            logging.warning(f"Warning: could not find two distinct valid peaks in ({sample_id}). Returning 0.6")
+            return 0.6
             
         # 3. Identify Normal and Tumor Peaks
         sorted_indices = np.argsort(peak_x)
@@ -343,7 +343,7 @@ class MalignantClassifier:
         query_cells = cell_names[~sample_obs['reference']]
         normal_cells = cell_names[sample_obs['reference']]
 
-        sample_type = sample_obs[sample_type_key].astype(str).str.lower().unique()
+        sample_type = sample_obs[sample_type_key].astype(str).str.lower().unique()[0]
 
         logging.info(f"({sample_id}) Sample type: {sample_type}")
         logging.info(f"({sample_id}) N. infercnv query cells: {len(query_cells)}")
@@ -718,7 +718,27 @@ class MalignantClassifier:
                 hotspot_mapping = sample_data[['chrarms', 'hotspotarm']].drop_duplicates()
                 hotspot_arms = hotspot_mapping[hotspot_mapping['hotspotarm'] == 'Yes']['chrarms'].tolist()
 
-                unique_arms = sample_data['chrarms'].unique()
+                raw_unique_arms = sample_data['chrarms'].unique()
+
+                def chr_sort_key(arm):
+                    # Separate the chromosome number/letter from the arm (p/q)
+                    chrom = arm[:-1]
+                    p_q = arm[-1]
+                    
+                    # Assign numerical values to sex chromosomes to push them to the end
+                    if chrom.upper() == 'X':
+                        c_val = 23
+                    elif chrom.upper() == 'Y':
+                        c_val = 24
+                    else:
+                        try:
+                            c_val = int(chrom)
+                        except ValueError:
+                            c_val = 999 # Fallback for unexpected formats
+                            
+                    return (c_val, p_q)
+
+                unique_arms = sorted(raw_unique_arms, key=chr_sort_key)
 
                 fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -729,7 +749,7 @@ class MalignantClassifier:
                     arm = row['chrarms']
                     if arm in arm_to_x and not np.isnan(row['lower_mad']):
                         x_center = arm_to_x[arm]
-                        rect = Rectangle(
+                        rect = patches.Rectangle(
                             xy=(x_center - 0.5, row['lower_mad']), 
                             width=1.0, 
                             height=row['upper_mad'] - row['lower_mad'],
@@ -1040,19 +1060,12 @@ class MalignantClassifier:
         # Convert to category for memory efficiency
         self.adata.obs["malignant_classif"] = self.adata.obs["malignant_classif"].astype("category")
 
-        # print a quick summary
-        if self.verbose:
-            counts = self.adata.obs["malignant_classif"].value_counts()
-            logging.info(">> Final Classification Summary:")
-            for status, count in counts.items():
-                logging.info(f"   - {status}: {count} cells")
-
         # remap reference and quary
-        self.adata.obs['reference_group'] = (adata.obs['reference'].map({True: 'Reference', False: 'Query', 'True': 'Reference', 'False': 'Query'})
+        self.adata.obs['reference_group'] = (self.adata.obs['reference'].map({True: 'Reference', False: 'Query', 'True': 'Reference', 'False': 'Query'})
         .astype('category'))
                 
 
-    def dbscan_outlier(self, classif_col='malignant_classif', embedding_key='X_umap', groupby='sample', outlier_col='dbscan_outlier'):
+    def dbscan_outlier(self, classif_col='malignant_classif', embedding_key='X_umap', groupby='sample'):
         """
         Runs sample-wise DBSCAN on the UMAP embeddings of malignant cells to detect 
         and label outliers. Creates a True/False flag column.
@@ -1069,7 +1082,7 @@ class MalignantClassifier:
         all_outlier_indices = []
         
         # Initialize the True/False column with False for all cells
-        self.adata.obs[outlier_col] = False
+        self.adata.obs['dbscan_outlier'] = False
         
         # Iterate through each sample independently
         for sample_id in self.adata.obs[groupby].unique():
@@ -1119,8 +1132,8 @@ class MalignantClassifier:
         # Apply the True/False flags and update classifications
         if all_outlier_indices:
             # Set the boolean flag to True for outliers using position-based indexing
-            outlier_col_idx = self.adata.obs.columns.get_loc(outlier_col)
-            self.adata.obs.iloc[all_outlier_indices, outlier_col_idx] = True
+            outlier_labels = self.adata.obs.index[all_outlier_indices]
+            self.adata.obs.loc[outlier_labels, 'dbscan_outlier'] = True
             
             # Update the categorical classification to 'Unknown'
             updated_classif = self.adata.obs[classif_col].astype(str).values
@@ -1131,8 +1144,15 @@ class MalignantClassifier:
         
         logging.info(">> Sample-wise DBSCAN outlier removal done.")
 
+        # print a quick summary
+        if self.verbose:
+            counts = self.adata.obs["malignant_classif"].value_counts()
+            logging.info(">> Final Classification Summary:")
+            for status, count in counts.items():
+                logging.info(f"   - {status}: {count} cells")
 
-def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, x_label="Score", title="", x_breaks=None):
+
+def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, x_label="Score", title="", x_breaks=None, ax=None):
         """
         Plots the density distribution of the scores with up to two threshold markers.
         """
@@ -1140,9 +1160,11 @@ def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, 
 
         # 1. Reverse sample order
         samples = list(metrics_df['sample'].unique())[::-1] 
-        
-        # Dynamically scale height based on sample count
-        fig, ax = plt.subplots(figsize=(9, len(samples) * 0.7 + 1.5))
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(9, len(samples) * 0.7 + 1.5))
+        else:
+            fig = ax.get_figure()
         
         # Generate a matching color palette
         colors = sns.color_palette("husl", len(samples))
@@ -1207,9 +1229,6 @@ def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, 
         ax.grid(axis='y', color='grey', linestyle='-', alpha=0.4)
 
         sns.despine(ax=ax, left=False)
-        
-        plt.tight_layout()
-        plt.show()
         
         return fig, ax
 
@@ -1348,14 +1367,14 @@ def plot_alluvial(adata, cell_type_key='cell_type', col2='CNV_classif', col3='ma
             for val, dims in nodes[i].items():
                 rect = patches.Rectangle(
                     (i - box_width/2, dims['y_bottom']), box_width, dims['height'], 
-                    facecolor='white', edgecolor='black', lw=1.5, zorder=10
+                    facecolor='white', edgecolor='black', lw=1, zorder=10
                 )
                 ax.add_patch(rect)
                 
                 ax.text(
                     i, (dims['y_top'] + dims['y_bottom'])/2, val, 
                     ha='center', va='center', 
-                    fontsize=category_fontsize, zorder=11
+                    fontsize=category_fontsize, zorder=11, fontweight='bold'
                 )
 
         max_height = total_cells + total_gap_budget
@@ -1363,7 +1382,7 @@ def plot_alluvial(adata, cell_type_key='cell_type', col2='CNV_classif', col3='ma
         ax.set_ylim(-max_height - (total_gap_budget * 0.05), total_gap_budget * 0.05)
         
         ax.set_xticks([0, 1, 2])
-        ax.set_xticklabels([cell_type_key, col2, col3], fontsize=column_fontsize, fontweight='bold')
+        ax.set_xticklabels([cell_type_key, col2, col3], fontsize=column_fontsize, fontweight='normal')
         ax.set_yticks([])
         
         # Hide the tick mark lines on the x-axis completely
@@ -1403,13 +1422,17 @@ def final_classif_plot(adata, group_key='malignant_classif', cell_type_key='cell
         basis='X_umap', 
         color='malignant_classif',  
         show=False,
-        size=10,
+        size=20,
         palette=my_colors,      
         ax=ax1,          
         frameon=True,
-        title='Final malignant classification',
+        title='',
         legend_loc='none'
     )
+
+    ax1.set_title('Final malignant classification', fontweight='bold', fontsize=12)
+    ax1.set_xlabel('UMAP_1', fontweight='normal')
+    ax1.set_ylabel('UMAP_2', fontweight='normal')
 
     legend_elements = [
         Line2D([0], [0], marker='o', color='none', markerfacecolor=color, markeredgecolor='none', label=label, markersize=8)
@@ -1540,8 +1563,9 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
 
         # Axis label styling
         ax.tick_params(axis='x', labelsize=10, rotation=90)
-        ax.tick_params(axis='y', labelsize=12)
+        ax.tick_params(axis='y', labelsize=12, rotation=90)
         ax.set_ylabel("")
+        ax.set_xlabel("")
         
         # Add a title for the split category
         if split_name is not None:
@@ -1941,11 +1965,16 @@ def plot_report_03(adata):
         
 
 def _cluster_worker(mat, idx):
+	'''Clustering worker for multiprocessing setup.
+	Uses hierarchical clustering of PCA components
+	'''
 	n = len(idx)
 	if n == 1:
 		return [idx[0]], None, n
+	
+	n_components = min(mat.shape[0], 20)
 
-	X = PCA(n_components=20, random_state=42).fit_transform(mat)
+	X = PCA(n_components=n_components, random_state=42).fit_transform(mat)
 	dist = pdist(X[idx], metric='correlation')
 	Z = linkage(dist, method='ward')
 	order = [idx[i] for i in leaves_list(Z)]
@@ -2020,19 +2049,18 @@ def get_clusters(mat, groups=None, threads=1):
 		return list(range(mat.shape[0])), None
 
 	if groups is None:
-		logger.info(f'    Hierarchical Clustering using single thread for whole matrix')
 		cell_order, Z, _ = _cluster_worker(mat, np.arange(mat.shape[0]))
 		return cell_order, Z
 
 	idx_list = [np.where(groups == group)[0] for group in sorted(np.unique(groups))]
 	threads = min(threads, len(idx_list))
 	if threads > 1:
-		logger.info(f'    Hierarchical Clustering using {threads} threads for {len(idx_list)} groups')
+		logging.info(f'    Hierarchical Clustering using {threads} threads for {len(idx_list)} groups')
 		results = Parallel(n_jobs=threads, prefer='threads')(
 			delayed(_cluster_worker)(mat, idx) for idx in idx_list
 		)
 	else:
-		logger.info(f'    Hierarchical Clustering using single thread for {len(idx_list)} groups')
+		logging.info(f'    Hierarchical Clustering using single thread for {len(idx_list)} groups')
 		results = [_cluster_worker(mat, idx) for idx in idx_list]
 
 	orders, Zs, sizes = zip(*results)
@@ -2194,7 +2222,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
                         unique_vals.append('nan')
                 
                 global_group_colors[var] = group_to_color
-                handles = [Patch(color=group_to_color[g], label=str(g)) for g in unique_vals]
+                handles = [patches.Patch(color=group_to_color[g], label=str(g)) for g in unique_vals]
                 
                 display_title = legend_titles.get(var, var)
                 all_legends_data.append((handles, display_title))
@@ -2436,6 +2464,9 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     classifier.final_classification()
 
+    classifier.dbscan_outlier()
+
+    # save adata
     classifier.adata.write(f"{dataset}_classif.h5ad")
 
     # ------ Plots --------------
@@ -2488,7 +2519,7 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
                     legend_titles=titles_dict, highlight_arms= hotspotarms_dict, save_pdf="CNV_heatmaps_samples.pdf", threads=n_jobs)
 
 
-    logging.info(">> Malignant classifier finished!")
+    logging.info(">> Malignant classification finished!")
 
 if __name__ == "__main__":
 
