@@ -2,7 +2,7 @@ process malignant_classif{
     label "malignant_classif"
     tag "${dataset}"
 
-    publishDir "${out_dir}/malignant_classif", mode: 'copy', overwrite: true
+    publishDir { "${out_dir}/malignant_classif" }, mode: 'copy', overwrite: true
 
     memory {
         def attempt = task.attempt ?: 1
@@ -19,7 +19,7 @@ process malignant_classif{
 
 
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(annot_mode), path(cnv_scores), path(gene_annots), path(cell_annots), val(num_cells)
+        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), path(anndata), path(cnv_scores), path(gene_annots), path(cell_annots), val(num_cells)
 
     output:
         tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmaps
@@ -35,16 +35,17 @@ process malignant_classif{
         """
         echo "${out_dir}" > .task_outdir
         
-        malignant_classif.py \\
-            -a "${adata_path}" \\
+        03_malignant_classif.py \\
+            -a "${anndata}" \\
             -i "${cnv_scores}" \\
             -s "${sample_key}" \\
             -c "${cell_type_key}" \\
+            -t "${sample_type_key}" \\
             ${origin_flag} \\
             -g "${gene_annots}" \\
             -n "${cell_annots}" \\
-            --annot_mode "${annot_mode}" \\
-            -d "${dataset}"
+            -d "${dataset}" \\
+            -j ${task.cpus}
     
         """
 
