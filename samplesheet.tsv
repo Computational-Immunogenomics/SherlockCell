@@ -1,2 +1,2 @@
-dataset	adata_path	cell_origin	reference_cells	sample_key	cell_type_key	annot_mode
-metastatic_colorectal_2026	/path/to/.h5ad	Epithelial				annotation
+dataset	adata_path	outdir	cell_origin	cell_type_key	sample_key	sample_type_key
+Qian2020_Ovarian	/mnt/immunocompnas1/projects/infercnvpy_benchmark/test_datasets/Data_Qian2020_Ovarian/reannot_results/scf_classif/Data_Qian2020_Ovarian.h5ad	/mnt/immunocompnas1/projects/infercnvpy_benchmark/results	Malignant			
