@@ -2,7 +2,7 @@ process swiftCNV{
     label "swiftCNV"
     tag "${dataset}"
 
-    publishDir "${out_dir}/swiftCNV", mode: 'copy', overwrite: true
+    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true
 
     memory {
             def attempt = task.attempt ?: 1
@@ -20,10 +20,11 @@ process swiftCNV{
 
     
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(annot_mode), path(cell_annots), val(num_cells), path(anndata)
+        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), path(cell_annots), val(num_cells)
         path gene_annots
         val hmm
         val plot
+        val sex_chr
         
     
     output:
@@ -38,19 +39,21 @@ process swiftCNV{
 
         def hmm_arg = hmm ? "--hmm" : ""
         def plot_arg = plot ? "--plot" : ""
+        def sex_chr_arg = sex_chr ? "--sex-chr" : ""
 
         """
         echo "${out_dir}" > .task_outdir
 
-        inferCNVpy ${args} \\
+        swiftcnv ${args} \\
           -i ${adata_path} \\
-          --reference ${cell_annots}
+          -c ${cell_annots} \\
           -o . \\
-          --gtf-path ${gene_annots} \\
-          --sample-col ${sample_key} \\
+          -a ${gene_annots} \\
+          -s ${sample_key} \\
           --exclude-immune \\
           ${hmm_arg} \\
           ${plot_arg} \\
+          ${sex_chr_arg} \\
         """
 
 }
