@@ -71,7 +71,6 @@ def format_anndata(adata_path):
             print(f"Valid X_umap field detected in .obsm (NaN rate: {obsm_nan_frac:.1%})", flush=True)
 
     elif len(umap_cols) >= 2:
-        # Pick the first 2 matching columns in case regex caught extras (e.g. UMAP_1, UMAP_2, UMAP_3)
         target_cols = umap_cols[:2]
         nan_fraction = adata.obs[target_cols].isna().to_numpy().mean()
 
@@ -79,6 +78,7 @@ def format_anndata(adata_path):
             print(f"UMAP columns detected in .obs, but {nan_fraction:.1%} of values are NaN. Treating as no UMAP.", flush=True)
         else:
             umap = True
+            adata_trans.varm['X_umap'] = adata_trans.var[target_cols].values
             print(f"Valid UMAP columns detected in .obs: {target_cols} (NaN rate: {nan_fraction:.1%})", flush=True)
 
     else:
@@ -147,6 +147,7 @@ def main(adata_dir, dataset):
         print(f'Removing {umap_cols} from cells.')
   
         adata = adata.obs.drop(umap_cols, axis=1)
+
 
     # add cell names
     cell_names = adata.obs_names.values
