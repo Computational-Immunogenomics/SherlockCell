@@ -2,7 +2,7 @@ process create_swiftCNV_annots {
     label "swiftCNV_annots"
     tag "${dataset}" 
 
-    publishDir "${out_dir}/swiftCNV", mode: 'copy', overwrite: true
+    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true
 
     memory {
             def attempt = task.attempt ?: 1
@@ -18,7 +18,7 @@ process create_swiftCNV_annots {
         }
 
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(ref_cells) , val(cell_origin), val(sample_key), val(cell_type_key), val(annot_mode), val(num_cells)
+        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(num_cells), path(anndata), path(scf_predictions)
 
     output:
         tuple val(dataset), path("cell_annotations_*.tsv"), emit: cell_annots
@@ -30,7 +30,7 @@ process create_swiftCNV_annots {
         """
         echo "${out_dir}" > .task_outdir
 
-        00_create_annotations.py -i ${adata_path} -d ${dataset} -n ${annot_mode} \\
-            -t ${cell_type_key} -a ${annot_mode} -r ${ref_cells} ${origin_flag} 
+        02_create_annotations.py -a ${anndata} -d ${dataset} \\
+            -t ${cell_type_key} -s ${sample_type_key} -p ${sample_key} -m ${scf_predictions} ${origin_flag} 
         """
         }
