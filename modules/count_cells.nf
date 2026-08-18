@@ -1,16 +1,17 @@
 process count_cells {
     tag "$dataset"
-    executor 'local' 
+    label "count_cells"
 
     input:
-    tuple val(dataset), path(adata)
+    tuple val(dataset), path(adata), val(out_dir)
 
     output:
     tuple val(dataset), stdout 
 
     script:
     """
-    #!/opt/env/bin/python
+    #!/usr/bin/env python3
+    import sys
     import scanpy as sc
 
     try:
