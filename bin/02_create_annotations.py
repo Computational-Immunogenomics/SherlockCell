@@ -67,8 +67,17 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
         is_sample_normal = (sample_type == "normal")
         adata.obs.loc[is_sample_normal, "reference"] = True
 
+    # set cell label as Na, nan as query
+    is_na_str = adata.obs[cell_type_key].astype(str).isin(['nan', 'Na', 'NaN', 'NA'])
+    is_null = adata.obs[cell_type_key].isna()
 
-    # 6. Format output
+    na_cells = adata.obs[is_null | is_na_str].index.values
+
+    if len(na_cells) > 0:
+        adata.obs.loc[na_cells, "reference"] = False
+
+
+    # Format output
     annotation = adata.obs[['reference']].copy()
     annotation['sample'] = adata.obs[sample_key].values
     annotation = annotation.reset_index().rename(columns={"index": "cell_name"})
