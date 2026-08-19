@@ -292,15 +292,27 @@ class MalignantClassifier:
             logging.warning(f"Warning: Not enough valid scores (< 2) to compute density in sample ({sample_id}). Returning 0.5")
             return 0.5
             
-        # 1. Calculate Kernel Density
-        kde = gaussian_kde(scores, bw_method=lambda k: k.scotts_factor() * 1.5)
+
+        # Check if all values are identical (zero variance)
+        if np.max(scores) == np.min(scores):
+            logging.warning(f"Warning: Scores have zero variance in sample ({sample_id}). Returning 0.5")
+            return 0.5
+
+
+        # Calculate Kernel Density
+        try:
+            kde = gaussian_kde(scores, bw_method=lambda k: k.scotts_factor() * 1.5)
+        except np.linalg.LinAlgError:
+            # Catch any remaining linear algebra errors from SciPy
+            logging.warning(f"Warning: KDE failed numerically in sample ({sample_id}). Returning 0.5")
+            return 0.5
         
         # Create a grid across the data range with padding (simulates R's 512 points)
         padding = np.std(scores)
         x_grid = np.linspace(np.min(scores) - padding, np.max(scores) + padding, 512)
         y_grid = kde(x_grid)
         
-        # 2. Find Peaks
+        # Find Peaks
         peaks_idx, _ = find_peaks(y_grid)
         if len(peaks_idx) == 0:
             return 0.5
@@ -319,7 +331,7 @@ class MalignantClassifier:
             logging.warning(f"Warning: could not find two distinct valid peaks in ({sample_id}). Returning 0.6")
             return 0.6
             
-        # 3. Identify Normal and Tumor Peaks
+        # Identify Normal and Tumor Peaks
         sorted_indices = np.argsort(peak_x)
         peak_x = peak_x[sorted_indices]
         peak_y = peak_y[sorted_indices]
@@ -334,7 +346,7 @@ class MalignantClassifier:
         remaining_y = peak_y[1:]
         tumor_peak = remaining_x[np.argmax(remaining_y)] # Highest density among the rest
         
-        # 4. Find the Valley
+        # Find the Valley
         valley_mask = (x_grid > normal_peak) & (x_grid < tumor_peak)
         valley_x_grid = x_grid[valley_mask]
         valley_y_grid = y_grid[valley_mask]
@@ -344,7 +356,7 @@ class MalignantClassifier:
             
         valley_x = valley_x_grid[np.argmin(valley_y_grid)]
         
-        # 5. Apply Strictness Shift
+        # Apply Strictness Shift
         if strictness > 0:
             cutoff = valley_x + (tumor_peak - valley_x) * strictness
         else:
@@ -869,8 +881,8 @@ class MalignantClassifier:
             combined_df.loc[idx, 'malignant_score'] = weighted_score
 
             # Calculate both thresholds
-            cut_real = MalignantClassifier._get_dynamic_cutoff(weighted_score.values, strictness=0.0, sample_id=sample_id)
-            cut_strict = MalignantClassifier._get_dynamic_cutoff(weighted_score.values, strictness=0.2, sample_id=sample_id)
+            cut_real = MalignantClassifier._get_dynamic_cutoff(weighted_score, strictness=0.0, sample_id=sample_id)
+            cut_strict = MalignantClassifier._get_dynamic_cutoff(weighted_score, strictness=0.2, sample_id=sample_id)
             
             # Enforce your lower bound rules safely
             cut_strict = max(0.5, cut_strict)
@@ -1170,12 +1182,12 @@ class MalignantClassifier:
                 logging.info(f"   - {status}: {count} cells")
 
         # format adata properly
-        adata.obs['CNV_classif'] = adata.obs[col].astype('category')
-        adata.obs['knn_classif'] = adata.obs[col].astype('category')
+        self.adata.obs['CNV_classif'] = self.adata.obs['CNV_classif'].astype('category')
+        self.adata.obs['knn_classif'] = self.adata.obs['knn_classif'].astype('category')
 
-        adata.var['chr'] = adata.var[col].astype('category')
-        adata.var['arm'] = adata.var[col].astype('category')
-        adata.var['chr_arm'] = adata.var[col].astype('category')
+        self.adata.var['chr'] = self.adata.var['chr'].astype('category')
+        self.adata.var['arm'] = self.adata.var['arm'].astype('category')
+        self.adata.var['chr_arm'] = self.adata.var['chr_arm'].astype('category')
         
 
 def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, x_label="Score", title="", x_breaks=None, ax=None):
@@ -1184,7 +1196,7 @@ def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, 
         """
         metrics_df = adata.obs
 
-        # 1. Reverse sample order
+        # Reverse sample order
         samples = list(metrics_df['sample'].unique())[::-1] 
 
         if ax is None:
@@ -1197,22 +1209,25 @@ def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, 
         
         overlap = 0.9  # Controls ridge height expansion
         
-        # 2. Plot each sample ridge from top to bottom
+        # Plot each sample ridge from top to bottom
         for i, sample in enumerate(samples):
             sample_metrics_df = metrics_df[metrics_df['sample'] == sample]
             values = sample_metrics_df[value_col].dropna()
             
-            if len(values) < 2: # Drop empty/insufficient data rows
-                continue
+            if len(values) < 2 or values.min() == values.max():
+                continue # Drop empty/insufficient data rows
                 
             # Extract the sample's unique cutoff values if the columns are provided and exist
             cutoff_1 = sample_metrics_df[cutoff_col_1].iloc[0] if (cutoff_col_1 and cutoff_col_1 in sample_metrics_df.columns) else None
             cutoff_2 = sample_metrics_df[cutoff_col_2].iloc[0] if (cutoff_col_2 and cutoff_col_2 in sample_metrics_df.columns) else None
             
             # Calculate Kernel Density Estimate (KDE)
-            kde = gaussian_kde(values)
-            x_eval = np.linspace(values.min(), values.max(), 500)
-            y_eval = kde(x_eval)
+            try:
+                kde = gaussian_kde(values)
+                x_eval = np.linspace(values.min(), values.max(), 500)
+                y_eval = kde(x_eval)
+            except np.linalg.LinAlgError:
+                continue
             
             # Normalize peak height to our strict overlap scale
             if y_eval.max() > 0:
@@ -1232,7 +1247,7 @@ def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, 
             # Draw the baseline segment under the ridge
             ax.plot([x_eval.min(), x_eval.max()], [baseline, baseline], color='grey', lw=0.5, alpha=0.5, zorder=current_zorder)
             
-            # 3. Draw the sample-specific cutoff segment lines
+            # Draw the sample-specific cutoff segment lines
             # First Cutoff (Solid Line)
             if cutoff_1 is not None and x_eval.min() <= cutoff_1 <= x_eval.max():
                 ax.plot([cutoff_1, cutoff_1], [baseline, baseline + 0.45], color='black', lw=1.2, zorder=current_zorder + 1)
@@ -1241,7 +1256,7 @@ def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, 
             if cutoff_2 is not None and x_eval.min() <= cutoff_2 <= x_eval.max():
                 ax.plot([cutoff_2, cutoff_2], [baseline, baseline + 0.45], color='black', lw=1.2, linestyle='--', zorder=current_zorder + 1)
 
-        # 4. Themes & Customizations
+        # Themes & Customizations
         ax.set_yticks(range(len(samples)))
         ax.set_yticklabels(samples, fontweight='bold', fontsize=10)
         ax.set_xlabel(x_label, fontweight='bold', fontsize=11, labelpad=10)
