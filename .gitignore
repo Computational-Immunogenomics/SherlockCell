@@ -1,5 +1,4 @@
 sherlockcell.sh
-samplesheet.tsv
 .nextflow.log*
 .nextflow/
 .nvm/
