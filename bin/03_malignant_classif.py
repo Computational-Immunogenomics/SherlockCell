@@ -100,6 +100,35 @@ def load_output(adata, cnv_scores, gene_annots, cell_annots):
     return adata
 
 
+def sort_chrom_arms(arms):
+    """
+    Helper function to sort chromosome arms numerically (1-22, X, Y)
+    and then by arm (p before q).
+    """
+    def parse_arm(arm):
+        # Match the numeric/letter part and the 'p' or 'q' part
+        match = re.match(r'^([0-9]+|[XYxy])([pq]?)$', str(arm))
+        if not match:
+            return (999, arm) # Fallback for unexpected formats
+        
+        chrom, arm_type = match.groups()
+        
+        # Map chromosomes to integers for proper sorting
+        if chrom.upper() == 'X':
+            chrom_val = 23
+        elif chrom.upper() == 'Y':
+            chrom_val = 24
+        else:
+            chrom_val = int(chrom)
+            
+        # Ensure 'p' comes before 'q'
+        arm_val = 0 if arm_type == 'p' else 1 if arm_type == 'q' else 2
+        
+        return (chrom_val, arm_val)
+        
+    return sorted(arms, key=parse_arm)
+
+
 def summarise_by_chr_arm(adata, obsm_layer='cnv_mat', mode='mean'):
     """
     Summarise the values in the specified obsm layer of an AnnData object by chromosome arm.
@@ -139,6 +168,9 @@ def summarise_by_chr_arm(adata, obsm_layer='cnv_mat', mode='mean'):
 
     # Filter out centromeres
     mean_by_arm_df = mean_by_arm_df.loc[:, ~mean_by_arm_df.columns.str.contains('centromere')]
+
+    # Ensure chromosomes are in right order
+    mean_by_arm_df = mean_by_arm_df.reindex(columns = sort_chrom_arms(mean_by_arm_df.columns))
 
     adata.obsm[f'{obsm_layer}_arms'] = mean_by_arm_df.copy()
 
@@ -411,16 +443,28 @@ class MalignantClassifier:
         loss_mask = med_malig < lower_mad
         hotspotarms = cnv_mat.columns[gain_mask | loss_mask].tolist()
 
-        chrarms_df = cnv_mat.reset_index().rename(columns={'index': 'cell_id'})
+        chrarms_df = cnv_mat.copy()
+        chrarms_df = chrarms_df.reset_index().rename(columns={'index': 'cell_id'})
+
         chrarms_df = chrarms_df.melt(id_vars=['cell_id'], var_name='chrarms', value_name='cnv_value')
         group_map = sample_obs['reference'].map({True: 'Reference', False: 'Query'}).to_dict()
         chrarms_df['group'] = chrarms_df['cell_id'].map(group_map)
         chrarms_df['sample'] = sample_id
 
-        if len(hotspotarms) > 0:
+        if len(hotspotarms) >= 4:
             logging.info(f"({sample_id}) Nº hotspotarms: {len(hotspotarms)}")
+
+            # remove sexual chromosomes from hotspot arms if present
+            sex_arms = ['Xp', 'Xq', 'Yp', 'Yq']
+            common = list(set(sex_arms) & set(hotspotarms))
+
+            if common:
+                for arm in common:
+                    hotspotarms.remove(arm)
+
             chrarms_df['hotspotarm'] = np.where(chrarms_df['chrarms'].isin(hotspotarms), "Yes", "No")
             cnv_p_mat_sub_hotarms = cnv_mat[hotspotarms]
+
         else:
             logging.warning(f"({sample_id}) Warning: No hotspot chromosome arms found! Getting hotspot arms from cells of origin only.")
                 
@@ -664,13 +708,6 @@ class MalignantClassifier:
         
         logging.info("Successfully executed and aggregated metrics for all samples.")
         
-        # return {
-        #     'hotspotarms_df': self.master_hotspotarms_df,
-        #     'corr_score': self.master_corr_df,
-        #     'cosine_dist': self.master_cosine_df,
-        #     'centroids_dist': self.master_centroids_df
-        # }
-
 
     def plot_cnv_chr_arms_pdf(self):
 
@@ -678,9 +715,8 @@ class MalignantClassifier:
             raise ValueError("Data not found. Run get_corr_scores() first.")
 
         df = self.master_hotspotarms_df
-        sample_ids = df['sample'].unique()
+        sample_ids = sorted(df['sample'].unique())
         
-        out_dir = getattr(self, 'out_dir', Path('.'))
         filename = "boxplots_cnv_chrArms.pdf"
         
         min_mad = 0.005
@@ -695,7 +731,7 @@ class MalignantClassifier:
 
                 sample_data = df[df['sample'] == sample_id].copy()
                 
-                # 1. Calculate MAD Thresholds
+                # Calculate MAD Thresholds
                 normal_data = sample_data[sample_data['group'] == 'Reference']
                 mad_records = []
                 
@@ -714,35 +750,15 @@ class MalignantClassifier:
 
                 mad_thresholds = pd.DataFrame(mad_records)
 
-                # 2. Identify Hotspot Arms
+                # Identify Hotspot Arms
                 hotspot_mapping = sample_data[['chrarms', 'hotspotarm']].drop_duplicates()
                 hotspot_arms = hotspot_mapping[hotspot_mapping['hotspotarm'] == 'Yes']['chrarms'].tolist()
 
-                raw_unique_arms = sample_data['chrarms'].unique()
-
-                def chr_sort_key(arm):
-                    # Separate the chromosome number/letter from the arm (p/q)
-                    chrom = arm[:-1]
-                    p_q = arm[-1]
-                    
-                    # Assign numerical values to sex chromosomes to push them to the end
-                    if chrom.upper() == 'X':
-                        c_val = 23
-                    elif chrom.upper() == 'Y':
-                        c_val = 24
-                    else:
-                        try:
-                            c_val = int(chrom)
-                        except ValueError:
-                            c_val = 999 # Fallback for unexpected formats
-                            
-                    return (c_val, p_q)
-
-                unique_arms = sorted(raw_unique_arms, key=chr_sort_key)
+                unique_arms = sample_data['chrarms'].unique()
 
                 fig, ax = plt.subplots(figsize=(12, 6))
 
-                # 3. Draw Background MAD Thresholds (The grey crossbars)
+                # Draw Background MAD Thresholds (The grey crossbars)
                 arm_to_x = {arm: i for i, arm in enumerate(unique_arms)}
 
                 for _, row in mad_thresholds.iterrows():
@@ -753,24 +769,26 @@ class MalignantClassifier:
                             xy=(x_center - 0.5, row['lower_mad']), 
                             width=1.0, 
                             height=row['upper_mad'] - row['lower_mad'],
-                            fill=True, color='grey', alpha=0.3, lw=0
+                            fill=True, color='grey', alpha=0.5, lw=0, zorder=0
                         )
                         ax.add_patch(rect)
 
-                # 4. Draw the Boxplots
+                # Draw the Boxplots
                 sns.boxplot(
                     data=sample_data,
                     x='chrarms',
                     y='cnv_value',
                     hue='group',
+                    hue_order=['Reference', 'Query'],
                     palette={"Query": "#F8766D", "Reference": "#00BFC4"},
                     showfliers=False, 
                     order=unique_arms,
                     ax=ax,
-                    linewidth=1.2
+                    linewidth=1.2,
+                    zorder=2
                 )
 
-                # 5. Formatting & Theme Customization
+                # Formatting & Theme Customization
                 ax.set_ylim(-0.2, 0.2)
                 ax.set_xlabel("")
                 ax.set_ylabel("cnv_value", fontweight='bold', fontsize=12)
@@ -782,7 +800,7 @@ class MalignantClassifier:
                 ax.set_axisbelow(True) 
                 sns.despine(ax=ax) 
 
-                # 6. Highlight Hotspot Arms (Bold & Red) and Rotate
+                # Highlight Hotspot Arms (Bold & Red) and Rotate
                 for tick_label in ax.get_xticklabels():
                     arm_name = tick_label.get_text()
                     tick_label.set_rotation(90)
@@ -790,7 +808,7 @@ class MalignantClassifier:
                     if arm_name in hotspot_arms:
                         tick_label.set_fontweight('bold')
 
-                # 7. Move Legend to Bottom
+                # Move Legend to Bottom
                 sns.move_legend(
                     ax, "lower center",
                     bbox_to_anchor=(0.5, -0.2), 
@@ -911,7 +929,7 @@ class MalignantClassifier:
 
        
         use_hvg = "highly_variable" in self.adata.var
-        sc.pp.pca(self.adata, use_highly_variable=use_hvg)
+        sc.pp.pca(self.adata, mask_var="highly_variable")
 
         logging.info('X_pca embbeding generated.')
         return self.adata
@@ -1151,6 +1169,14 @@ class MalignantClassifier:
             for status, count in counts.items():
                 logging.info(f"   - {status}: {count} cells")
 
+        # format adata properly
+        adata.obs['CNV_classif'] = adata.obs[col].astype('category')
+        adata.obs['knn_classif'] = adata.obs[col].astype('category')
+
+        adata.var['chr'] = adata.var[col].astype('category')
+        adata.var['arm'] = adata.var[col].astype('category')
+        adata.var['chr_arm'] = adata.var[col].astype('category')
+        
 
 def plot_density_ridges(adata, value_col, cutoff_col_1=None, cutoff_col_2=None, x_label="Score", title="", x_breaks=None, ax=None):
         """
@@ -1462,35 +1488,6 @@ def final_classif_plot(adata, group_key='malignant_classif', cell_type_key='cell
     plt.close(fig)
 
 
-def sort_chrom_arms(arms):
-    """
-    Helper function to sort chromosome arms numerically (1-22, X, Y)
-    and then by arm (p before q).
-    """
-    def parse_arm(arm):
-        # Match the numeric/letter part and the 'p' or 'q' part
-        match = re.match(r'^([0-9]+|[XYxy])([pq]?)$', str(arm))
-        if not match:
-            return (999, arm) # Fallback for unexpected formats
-        
-        chrom, arm_type = match.groups()
-        
-        # Map chromosomes to integers for proper sorting
-        if chrom.upper() == 'X':
-            chrom_val = 23
-        elif chrom.upper() == 'Y':
-            chrom_val = 24
-        else:
-            chrom_val = int(chrom)
-            
-        # Ensure 'p' comes before 'q'
-        arm_val = 0 if arm_type == 'p' else 1 if arm_type == 'q' else 2
-        
-        return (chrom_val, arm_val)
-        
-    return sorted(arms, key=parse_arm)
-
-
 def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms", outdir=None):
 
     # Determine the categories to split by
@@ -1520,7 +1517,7 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
             
         summarised_mat = sub_mat.groupby(sub_obs[groupby], sort=False).mean()
         
-        # ---> FIX: Reorder the columns (chromosome arms) here <---
+        # Reorder the columns (chromosome arms)
         sorted_columns = sort_chrom_arms(summarised_mat.columns)
         summarised_mat = summarised_mat[sorted_columns]
         
@@ -2110,7 +2107,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
     
     for sample in unique_samples:
         
-        # 1. Subset the main anndata object
+        # Subset the main anndata object
         sample_adata = adata[adata.obs[group_key] == sample].copy()
         
         if cnv_key in sample_adata.obsm:
@@ -2122,7 +2119,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
         else:
             raise KeyError(f"'{cnv_key}' not found in adata.obsm for sample '{sample}'.")
  
-        # 2. Extract matrix & chromosome metadata
+        # Extract matrix & chromosome metadata
         cnv_adata = sample_adata.obsm[cnv_key]
         mat = cnv_adata.values
         if sp.issparse(mat):
@@ -2134,7 +2131,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
         # Get highlighted arms for this specific sample
         sample_marked_arms = highlight_arms.get(sample, [])
 
-        # 3. Continuous variable setup (CUSTOM HALF-WHITE / HALF-REDS COLORMAP)
+        # Continuous variable setup (CUSTOM HALF-WHITE / HALF-REDS COLORMAP)
         has_continuous = (continuous_var is not None) and (continuous_var in sample_adata.obs.columns)
         if has_continuous:
             score_vals_all = sample_adata.obs[continuous_var].values.astype(float)
@@ -2152,7 +2149,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
             
             score_cm = mcolors.ListedColormap(np.vstack((white_part, reds_part)), name="WhiteToReds")
 
-        # 4. Group and Cluster ALL cells based on split_by
+        # Group and Cluster all cells based on split_by
         cell_groups = {}
         if split_by and split_by in sample_adata.obs.columns:
             raw_vals = sample_adata.obs[split_by].values
@@ -2195,7 +2192,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
                 'rows': all_idx[order]
             }
 
-        # 5. Global Color Palette Setup
+        # Global Color Palette Setup
         palettes = ["Set3", "tab20", 'Paired'] 
         all_legends_data = []
         global_group_colors = {}
@@ -2234,7 +2231,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
             auto_lim = max(auto_lim, 0.05)
             vmin, vmax = -auto_lim, auto_lim
 
-        # 6. Build Dynamic GridSpec Layout
+        # Build Dynamic GridSpec Layout
         split_gap_height = max(1, int(0.008 * n_total_cells)) 
         chr_height = max(1, int(0.03 * n_total_cells))
 
@@ -2269,7 +2266,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
 
         norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
         
-        # 7. Render Sub-Heatmaps for each classification split
+        # Render Sub-Heatmaps for each classification split
         curr_row = 0
         unique_chroms = np.unique(chromosomes)
         chrom_to_int = {c: i for i, c in enumerate(unique_chroms)}
@@ -2340,7 +2337,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
                     
             curr_row += 2
 
-        # 8. Chromosome Track at bottom
+        # Chromosome Track at bottom
         chr_row_idx = n_rows - 1
         ax_chr = fig.add_subplot(gs[chr_row_idx, col_heatmap])
         ax_chr.set_xlim(-0.5, len(chromosomes) - 0.5)
@@ -2510,9 +2507,10 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
     # CNV heatmaps by sample
     hotspotarms_dict = (classifier.master_hotspotarms_df.loc[classifier.master_hotspotarms_df['hotspotarm'] == 'Yes']
         .groupby('sample')['chrarms']
-        .agg(lambda x: sorted(x.unique()))
+        .agg(lambda x: x.unique())
         .to_dict()
-)
+        )
+
     titles_dict = {'cell_type': 'Cell type', 'knn_classif': 'KNN classif.', 'CNV_classif': 'CNV classif.', 'CNV_values': 'CNV values', 'malignant_score': 'Malignant score', 'malignant_classif': 'Malignant classif.' }
 
     plot_cnv_by_sample(classifier.adata, group_key=sample_key, color_by=['malignant_score', 'cell_type', 'CNV_classif', 'knn_classif', 'malignant_classif'], split_by='malignant_classif', continuous_var="malignant_score",
