@@ -30,7 +30,7 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
     adata.obs['scf_predict'] = adata.obs.index.map(mapped_predictions)
 
     if isinstance(cell_origin, str):
-        cell_origin_list = [cell_origin]
+        cell_origin_list = [item.strip() for item in cell_origin.split(',')]
     elif cell_origin is not None:
         cell_origin_list = list(cell_origin)
     else:
