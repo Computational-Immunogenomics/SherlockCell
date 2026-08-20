@@ -5,6 +5,7 @@ import sys
 import glob
 import re
 import warnings
+import numpy as np
 import scanpy as sc   
 import pandas as pd
 import argparse
