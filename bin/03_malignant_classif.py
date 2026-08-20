@@ -200,16 +200,16 @@ class MalignantClassifier:
 
         valid_cell_types = set(self.adata.obs[self.cell_type_key].dropna().unique())
 
-        if cell_of_origin is None or cell_of_origin not in valid_cell_types:
+        if cell_of_origin is None:
             raise ValueError(
                 "cell_of_origin has not been set or not valid. Please set the tumor cell type(s) of origin, e.g: ['Epithelial', 'Glandular']."
                 f" Valid values are: {list(self.adata.obs[self.cell_type_key].dropna().unique())}"
             )
 
         if isinstance(cell_of_origin, str):
-            self.cell_of_origin = [cell_of_origin]
+            self.cell_of_origin = [item.strip() for item in cell_of_origin.split(',') if item.strip()]
         else:
-            self.cell_of_origin = list(cell_of_origin)
+            self.cell_of_origin = [str(item).strip() for item in cell_of_origin]
 
         invalid_types = set(self.cell_of_origin) - valid_cell_types
         if invalid_types:
@@ -411,19 +411,16 @@ class MalignantClassifier:
             corr_df = pd.DataFrame({
                 'corr_score': -0.5,
                 'corr_state': 'no_corr',
-                'corr_cutoff': 0.4,
                 'sample': sample_id
             }, index=cell_names)
             
             cosine_dist_df = pd.DataFrame({
                 'cos_dist': 0.0,
-                'cos_cutoff': 0.4,
                 'sample': sample_id
             }, index=cell_names)
             
             clipped_dist_df = pd.DataFrame({
                 'distance_ratio': 0.0,
-                'centroids_cutoff': 0.4,
                 'sample': sample_id
             }, index=cell_names)
             
@@ -548,16 +545,9 @@ class MalignantClassifier:
         weights = ref_signature.abs()
 
         corr_weighted = MalignantClassifier._vectorized_weighted_pearson(matrix_to_run, ref_signature, weights)
-
-        dynamic_cut = MalignantClassifier._get_dynamic_cutoff(corr_weighted.values, strictness=0.2, sample_id=sample_id)
-        cut_strict = max(0.5, dynamic_cut)
-
-        corr_state = np.where(corr_weighted > cut_strict, "highly_corr", "no_corr")
         
         corr_df = pd.DataFrame({
             'corr_score': corr_weighted.values,
-            'corr_state': corr_state,
-            'corr_cutoff': cut_strict,
             'sample': sample_id
         }, index=corr_weighted.index)
 
@@ -589,17 +579,8 @@ class MalignantClassifier:
         distance_ratio = clipped_dist_norm / (clipped_dist_mal + clipped_dist_norm)
         distance_ratio = distance_ratio.fillna(0)
 
-        dyn_cutoff_centroids = MalignantClassifier._get_dynamic_cutoff(
-            distance_ratio.values, 
-            strictness=0.2, 
-            sample_id=sample_id
-        )
-
-        centroids_cutoff = max(0.3, dyn_cutoff_centroids) # minimum cutoff is 0.3
-
         clipped_dist_df = pd.DataFrame({
             'distance_ratio': distance_ratio,
-            'centroids_cutoff': centroids_cutoff,
             'sample': sample_id
         }, index=distance_ratio.index)
 
@@ -643,11 +624,9 @@ class MalignantClassifier:
 
         # Cosine Ratio metric calculation
         knn_cosine_score = cos_dist_norm / (cos_dist_norm + cos_dist_mal)
-        knn_cosine_cutoff = max(0.3, MalignantClassifier._get_dynamic_cutoff(knn_cosine_score, strictness=0.1, sample_id=sample_id)) # minimum cutoff is 0.3
 
         cosine_dist_df = pd.DataFrame({
             'cos_dist': knn_cosine_score,
-            'cos_cutoff': knn_cosine_cutoff,
             'sample': sample_id
         }, index=cnv_mat.index)
 
@@ -888,6 +867,9 @@ class MalignantClassifier:
             cut_strict = max(0.5, cut_strict)
             cut_real = min(cut_real, cut_strict) # ensure the real valley doesn't jump past the strict floor
             
+            if cut_real == 0.6: # set lower threshold to 0.5 in case peaks are not found
+                cut_real = 0.5
+
             combined_df.loc[idx, 'malignant_cutoff_real'] = cut_real
             combined_df.loc[idx, 'malignant_cutoff_strict'] = cut_strict
 
@@ -947,7 +929,7 @@ class MalignantClassifier:
         return self.adata
 
 
-    def knn_malignant_classification(self, embedding_key='X_pca'):
+    def knn_malignant_classification(self, embedding_key='X_umap'):
         logging.info(">> Computing KNN classification...")
 
         if embedding_key is None or embedding_key not in self.adata.obsm:
@@ -1488,7 +1470,7 @@ def final_classif_plot(adata, group_key='malignant_classif', cell_type_key='cell
         frameon=False                  # Remove border around legend
     )
 
-    plot_alluvial(adata, cell_type_key='cell_type', ax=ax2)
+    plot_alluvial(adata, cell_type_key= cell_type_key, ax=ax2)
 
     ax1.spines['top'].set_visible(False)
     ax1.spines['right'].set_visible(False)
@@ -1575,7 +1557,7 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
 
         # Axis label styling
         ax.tick_params(axis='x', labelsize=10, rotation=90)
-        ax.tick_params(axis='y', labelsize=12, rotation=90)
+        ax.tick_params(axis='y', labelsize=10, rotation=0)
         ax.set_ylabel("")
         ax.set_xlabel("")
         
@@ -1616,7 +1598,7 @@ def plot_report_01(adata, cell_type_key, sample_key):
     ax1.set_title('Cell type', fontweight='bold', fontsize=16)
 
     cell_types = adata.obs[cell_type_key].cat.categories
-    colors = adata.uns['cell_type_colors']
+    colors = adata.uns[f'{cell_type_key}_colors']
 
     legend_elements = [
         Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
@@ -1663,12 +1645,18 @@ def plot_report_01(adata, cell_type_key, sample_key):
         .astype('category')
     )
 
+    my_colors = {
+        'Query': '#FA786D',
+        'Reference': '#00C1CA'
+    }
+
     sc.pl.embedding(
         adata,
         basis='X_umap', 
         color='reference_group',  
         show=False,
-        size=10,    
+        size=10,
+        palette=my_colors,    
         ax=ax3,          
         frameon=True,
         legend_loc='none'
@@ -2478,23 +2466,19 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     classifier.dbscan_outlier()
 
-    # save adata
-    classifier.adata.write(f"{dataset}_classif.h5ad")
-
     # ------ Plots --------------
 
     # Hotspot arms report
     classifier.plot_cnv_chr_arms_pdf()
 
     # Final classification
-    final_classif_plot(classifier.adata)
+    final_classif_plot(classifier.adata, cell_type_key= cell_type_key)
 
     # Summary CNV heatmap with only malignant cells
     adata_malig = classifier.adata[classifier.adata.obs['malignant_classif'].isin(['Malignant-high confidence', 'Malignant-like'])].copy()
 
     plot_cnv_summary(adata_malig, groupby=sample_key, use_rep='cnv_mat_arms')
     del adata_malig
-
 
     # Metrics plots
 
@@ -2511,7 +2495,7 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
         pdf.savefig(fig2, bbox_inches='tight')
         plt.close(fig2)
 
-        # --- PAGE 2 ---
+        # --- PAGE 3 ---
         fig3 = plot_report_03(classifier.adata)
         pdf.savefig(fig3, bbox_inches='tight')
         plt.close(fig3)
@@ -2526,11 +2510,20 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
         .to_dict()
         )
 
-    titles_dict = {'cell_type': 'Cell type', 'knn_classif': 'KNN classif.', 'CNV_classif': 'CNV classif.', 'CNV_values': 'CNV values', 'malignant_score': 'Malignant score', 'malignant_classif': 'Malignant classif.' }
+    titles_dict = {cell_type_key: 'Cell type', 'knn_classif': 'KNN classif.', 'CNV_classif': 'CNV classif.', 'CNV_values': 'CNV values', 'malignant_score': 'Malignant score', 'malignant_classif': 'Malignant classif.' }
 
-    plot_cnv_by_sample(classifier.adata, group_key=sample_key, color_by=['malignant_score', 'cell_type', 'CNV_classif', 'knn_classif', 'malignant_classif'], split_by='malignant_classif', continuous_var="malignant_score",
+    plot_cnv_by_sample(classifier.adata, group_key=sample_key, color_by=['malignant_score', cell_type_key, 'CNV_classif', 'knn_classif', 'malignant_classif'], split_by='malignant_classif', continuous_var="malignant_score",
                     legend_titles=titles_dict, highlight_arms= hotspotarms_dict, save_pdf="CNV_heatmaps_samples.pdf", threads=n_jobs)
 
+
+    # save adata
+    try:
+        classifier.adata.write(f"{dataset}_classif.h5ad")
+    except:
+        classifier.adata.uns['cnv_mat_columns'] = list(classifier.adata.obsm['cnv_mat'].columns)
+        classifier.adata.obsm['cnv_mat'] = classifier.adata.obsm['cnv_mat'].to_numpy()
+        
+        classifier.adata.write(f"{dataset}_classif.h5ad")
 
     logging.info(">> Malignant classification finished!")
 
