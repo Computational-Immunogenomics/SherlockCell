@@ -20,7 +20,7 @@ process swiftCNV{
 
     
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), path(cell_annots), val(num_cells)
+        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), path(cell_annots), val(num_cells), val(cutoff)
         path gene_annots
         val hmm
         val plot
@@ -33,6 +33,7 @@ process swiftCNV{
         tuple val(dataset), path("gene_order.tsv.gz"), emit: gene_order_swiftCNV
         tuple val(dataset), path("cnv_scores.png"), emit: heatmap, optional: true
         tuple val(dataset), path("hmm/"), emit: hmm_dir, optional: true
+        tuple val(dataset), path("swiftcnv.log"), emit: log_file, optional: true
 
     script:
         def args = task.ext.args ?: ''
@@ -51,9 +52,10 @@ process swiftCNV{
           -a ${gene_annots} \\
           -s ${sample_key} \\
           --exclude-immune \\
+          --cutoff ${cutoff} \\
           ${hmm_arg} \\
           ${plot_arg} \\
-          ${sex_chr_arg} \\
+          ${sex_chr_arg}
         """
 
 }
