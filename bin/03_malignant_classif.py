@@ -31,6 +31,8 @@ from collections import Counter
 from sklearn.cluster import DBSCAN
 from kneed import KneeLocator
 
+sc.settings._vector_friendly = True #rasterize umap plots
+
 
 def _add_mat_to_adata(adata, matrix, genes, cells, key_added='cnv_mat'):
 
@@ -198,6 +200,7 @@ class MalignantClassifier:
         if self.sample_type_key not in self.adata.obs:
             raise ValueError(f"'{sample_type_key}' not present in adata.obs")
 
+
         valid_cell_types = set(self.adata.obs[self.cell_type_key].dropna().unique())
 
         if cell_of_origin is None:
@@ -328,8 +331,8 @@ class MalignantClassifier:
         peak_y = peak_y[valid_peaks]
         
         if len(peak_x) < 2:
-            logging.warning(f"Warning: could not find two distinct valid peaks in ({sample_id}). Returning 0.6")
-            return 0.6
+            logging.warning(f"Warning: could not find two distinct valid peaks in ({sample_id}). Returning 0.5")
+            return 0.5
             
         # Identify Normal and Tumor Peaks
         sorted_indices = np.argsort(peak_x)
@@ -389,6 +392,11 @@ class MalignantClassifier:
 
         sample_type = sample_obs[sample_type_key].astype(str).str.lower().unique()[0]
 
+        valid_sample_types = ['tumor', 'normal']
+
+        if sample_type not in valid_sample_types:
+            raise ValueError(f'Invalid sample type: {sample_type}. Please set it as "tumor" or "normal".')
+
         logging.info(f"({sample_id}) Sample type: {sample_type}")
         logging.info(f"({sample_id}) N. infercnv query cells: {len(query_cells)}")
         logging.info(f"({sample_id}) N. infercnv reference cells: {len(normal_cells)}")
@@ -400,7 +408,9 @@ class MalignantClassifier:
         if sample_type == 'normal' or len(query_cells) < 20 or n_malignants <= 20:
             logging.info(f"Warning: sample ({sample_id}) does not contain enough query cells (<= 20). Classified as Normal/Unknown.")
             
-            chrarms_df = cnv_mat.reset_index().rename(columns={'index': 'cell_id'})
+            chrarms_df = cnv_mat.copy()
+            chrarms_df.index.name = 'cell_id'
+            chrarms_df = chrarms_df.reset_index()
             chrarms_df = chrarms_df.melt(id_vars=['cell_id'], var_name='chrarms', value_name='cnv_value')
             
             group_map = sample_obs['reference'].map({True: 'Reference', False: 'Query'}).to_dict()
@@ -453,7 +463,8 @@ class MalignantClassifier:
         hotspotarms = cnv_mat.columns[gain_mask | loss_mask].tolist()
 
         chrarms_df = cnv_mat.copy()
-        chrarms_df = chrarms_df.reset_index().rename(columns={'index': 'cell_id'})
+        chrarms_df.index.name = 'cell_id'
+        chrarms_df = chrarms_df.reset_index()
 
         chrarms_df = chrarms_df.melt(id_vars=['cell_id'], var_name='chrarms', value_name='cnv_value')
         group_map = sample_obs['reference'].map({True: 'Reference', False: 'Query'}).to_dict()
@@ -546,8 +557,12 @@ class MalignantClassifier:
 
         corr_weighted = MalignantClassifier._vectorized_weighted_pearson(matrix_to_run, ref_signature, weights)
         
+        dynamic_cut = MalignantClassifier._get_dynamic_cutoff(corr_weighted.values, strictness=0.2, sample_id=sample_id)
+        cut_strict = max(0.5, dynamic_cut)
+
         corr_df = pd.DataFrame({
             'corr_score': corr_weighted.values,
+            'corr_cutoff': cut_strict,
             'sample': sample_id
         }, index=corr_weighted.index)
 
@@ -579,8 +594,16 @@ class MalignantClassifier:
         distance_ratio = clipped_dist_norm / (clipped_dist_mal + clipped_dist_norm)
         distance_ratio = distance_ratio.fillna(0)
 
+        dyn_cutoff_centroids = MalignantClassifier._get_dynamic_cutoff(
+            distance_ratio.values, 
+            strictness=0.2, 
+            sample_id=sample_id)
+
+        centroids_cutoff = max(0.3, dyn_cutoff_centroids) # minimum cutoff is 0.3
+
         clipped_dist_df = pd.DataFrame({
             'distance_ratio': distance_ratio,
+            'centroids_cutoff': centroids_cutoff,
             'sample': sample_id
         }, index=distance_ratio.index)
 
@@ -624,9 +647,11 @@ class MalignantClassifier:
 
         # Cosine Ratio metric calculation
         knn_cosine_score = cos_dist_norm / (cos_dist_norm + cos_dist_mal)
+        knn_cosine_cutoff = max(0.3, MalignantClassifier._get_dynamic_cutoff(knn_cosine_score, strictness=0.1, sample_id=sample_id)) # minimum cutoff is 0.3
 
         cosine_dist_df = pd.DataFrame({
             'cos_dist': knn_cosine_score,
+            'cos_cutoff': knn_cosine_cutoff,
             'sample': sample_id
         }, index=cnv_mat.index)
 
@@ -688,7 +713,7 @@ class MalignantClassifier:
                     all_centroids.append(sample_results['centroids_dist'])
                     
                 except Exception as e:
-                    logging.error(f"Failed scoring execution on sample ({sample_id}). Error: {str(e)}")
+                    logging.error(f"Failed scoring on sample ({sample_id}). Error: {str(e)}")
                     raise e
                 
         logging.info("Concatenating parallelized sample outputs...")
@@ -814,10 +839,9 @@ class MalignantClassifier:
         logging.info(">> Seaborn hotspot arms report saved!")
 
 
-    def get_malignant_score(self, groupby=None):
+    def get_malignant_classif(self, groupby=None):
         """
-        Calculates a combined score from three metrics and classifies cells into
-        Malignant, Malignant-like, or Normal using a multi-strictness threshold window.
+        Classifies cells into Malignant, Malignant-like, or Normal based on the different metrics using a multi-strictness threshold window.
         """
 
         if groupby is None:
@@ -828,73 +852,92 @@ class MalignantClassifier:
         cosine_df = self.master_cosine_df
 
         combined_df = pd.concat([
-            corr_df[['corr_score']], 
-            centroids_df[['distance_ratio']], 
-            cosine_df[['cos_dist', 'sample']]
+            corr_df[['corr_score', 'corr_cutoff']], 
+            centroids_df[['distance_ratio', 'centroids_cutoff']], 
+            cosine_df[['cos_dist', 'cos_cutoff', 'sample']]
         ], axis=1)
-        
-        # Initialize columns for tracking scores and both cutoff thresholds
-        combined_df['malignant_score'] = np.nan
-        combined_df['malignant_cutoff_real'] = np.nan    # Strictness = 0.0
-        combined_df['malignant_cutoff_strict'] = np.nan  # Strictness = 0.2
-        
-        for sample_id in combined_df[groupby].unique():
-            idx = combined_df[groupby] == sample_id
-            sub_df = combined_df.loc[idx]
 
-            def safe_min_max(series):
-                s_min = series.min()
-                s_max = series.max()
-                # If the column is completely empty or has zero variance (max == min)
-                if pd.isna(s_min) or pd.isna(s_max) or (s_max == s_min):
-                    return np.zeros_like(series, dtype=float)
-                return (series - s_min) / (s_max - s_min)
-
-            # Scale metrics
-            mm_corr = safe_min_max(sub_df['corr_score'])
-            mm_cos = safe_min_max(sub_df['cos_dist'])
-            mm_cent = safe_min_max(sub_df['distance_ratio'])
-
-            # Compute composite score
-            weighted_score = (mm_corr * 0.4) + (mm_cos * 0.3) + (mm_cent * 0.3)
-            combined_df.loc[idx, 'malignant_score'] = weighted_score
-
-            # Calculate both thresholds
-            cut_real = MalignantClassifier._get_dynamic_cutoff(weighted_score, strictness=0.0, sample_id=sample_id)
-            cut_strict = MalignantClassifier._get_dynamic_cutoff(weighted_score, strictness=0.2, sample_id=sample_id)
-            
-            # Enforce your lower bound rules safely
-            cut_strict = max(0.5, cut_strict)
-            cut_real = min(cut_real, cut_strict) # ensure the real valley doesn't jump past the strict floor
-            
-            if cut_real == 0.6: # set lower threshold to 0.5 in case peaks are not found
-                cut_real = 0.5
-
-            combined_df.loc[idx, 'malignant_cutoff_real'] = cut_real
-            combined_df.loc[idx, 'malignant_cutoff_strict'] = cut_strict
-
-        conditions = [
-            (combined_df['malignant_score'] >= combined_df['malignant_cutoff_strict']),
-            (combined_df['malignant_score'] >= combined_df['malignant_cutoff_real']) & (combined_df['malignant_score'] < combined_df['malignant_cutoff_strict'])
-        ]
-        choices = ['Malignant-high confidence', 'Malignant-like']
-        
-        combined_df['CNV_classif'] = np.select(conditions, choices, default='Normal')
+        aligned_df = combined_df.reindex(self.adata.obs.index)
 
         # Clean overlap and transfer back to adata.obs
         cols_to_transfer = [
-            'corr_score', 'distance_ratio', 'cos_dist', 
-            'malignant_score', 'malignant_cutoff_real', 'malignant_cutoff_strict', 'CNV_classif'
-        ]
+            'corr_score', 'distance_ratio', 'cos_dist', 'corr_cutoff', 'centroids_cutoff', 'cos_cutoff', 'CNV_classif'
+            ]
         
-        existing_overlapping_cols = [c for c in cols_to_transfer if c in self.adata.obs.columns]
-        if existing_overlapping_cols:
-            self.adata.obs = self.adata.obs.drop(columns=existing_overlapping_cols)
+        for col in cols_to_transfer:
+                if col in aligned_df.columns:
+                    self.adata.obs[col] = aligned_df[col]
+        
+        samples = self.adata.obs['sample'].unique()
+        
+        for sample in samples:
+            adata_sample = self.adata[self.adata.obs['sample'] == sample]
+
+            corr_cutoff = adata_sample.obs['corr_cutoff'].mean()
+            cos_cutoff = adata_sample.obs['cos_cutoff'].mean()
+            centroid_cutoff = adata_sample.obs['centroids_cutoff'].mean()
             
-        self.adata.obs = self.adata.obs.join(combined_df[cols_to_transfer], how='left')
+            corr_state = adata_sample.obs['corr_score'] > corr_cutoff
+            cosine_state = adata_sample.obs['cos_dist'] > cos_cutoff
+            centroid_state = adata_sample.obs['distance_ratio'] > centroid_cutoff
+
+            conditions = [
+                # 1. corr_state == "highly_corr" & centroid_state == "Malignant"
+                corr_state & centroid_state,
+                
+                # 2. corr_state == "highly_corr" & centroids == "Normal" & cosine == "Malignant"
+                corr_state & (~centroid_state) & cosine_state,
+                
+                # 3. corr_state == "highly_corr" & centroids == "Normal" & cosine == "Normal"
+                corr_state & (~centroid_state) & (~cosine_state),
+                
+                # 4. corr_state == "no_corr" & centroids == "Normal"
+                (~corr_state) & (~centroid_state),
+                
+                # 5. corr_state == "no_corr" & centroids == "Malignant" & cosine == "Malignant"
+                (~corr_state) & centroid_state & cosine_state,
+                
+                # 6. corr_state == "no_corr" & centroids == "Malignant" & cosine == "Normal"
+                (~corr_state) & centroid_state & (~cosine_state)
+            ]
+
+            choices = [
+                "Malignant-high confidence",  # 1
+                "Malignant-like",             # 2
+                "Malignant-like",             # 3
+                "Normal",                     # 4
+                "Malignant-like",             # 5
+                "Normal"                      # 6
+            ]
+
+            # Assign classified labels for the sample's indices
+            self.adata.obs.loc[adata_sample.obs.index, 'CNV_classif'] = np.select(
+                conditions, choices, default="Unknown"
+            )
+
         logging.info(">> Successfully computed multi-tier malignant scores and classifications.")
 
+    def get_malignant_score(self):
 
+        def robust_min_max(series, low_q=0.01, high_q=0.99):
+            q_low, q_high = series.quantile([low_q, high_q])
+            clipped = series.clip(lower=q_low, upper=q_high)
+
+            return (clipped - q_low) / (q_high - q_low)
+
+        samples = self.adata.obs['sample'].unique()
+        
+        for sample in samples:
+            adata_sample = self.adata[self.adata.obs['sample'] == sample]
+
+            mm_corr = robust_min_max(adata_sample.obs['corr_score'])
+            mm_cos = robust_min_max(adata_sample.obs['cos_dist'])
+            mm_cent = robust_min_max(adata_sample.obs['distance_ratio'])
+
+            weighted_score = (mm_corr * 0.4) + (mm_cos * 0.3) + (mm_cent * 0.3)
+            self.adata.obs.loc[adata_sample.obs.index, 'malignant_score'] = weighted_score
+
+ 
     def generate_pca(self):
         # check the data type of the matrix
         x_max = self.adata.X.max()
@@ -929,8 +972,26 @@ class MalignantClassifier:
         return self.adata
 
 
-    def knn_malignant_classification(self, embedding_key='X_umap'):
-        logging.info(">> Computing KNN classification...")
+    def get_majority_vote(self, neighborhood):
+        # Filter out missing values or standard string conversions of missing data
+        v = [cell for cell in neighborhood if pd.notna(cell) and str(cell).lower() not in ['nan', 'none', 'unknown']]
+        
+        if not v:
+            return "Unknown"
+            
+        total = len(v)
+
+        malignant_count = sum(1 for cell in v if cell in ["Malignant-high confidence", "Malignant-like"])
+            
+        # If more than 90% of the cells are Malignant-high confidence, it will be classified as malignant
+        if (malignant_count / total) >= 0.90:
+            return "Malignant"
+        else:
+            return "Normal"
+
+
+    def knn_malignant_classification(self, sample_key, sample_type_key, embedding_key='X_umap'):
+        logging.info(">> Computing KNN classification by sample...")
 
         if embedding_key is None or embedding_key not in self.adata.obsm:
             if 'X_pca' not in self.adata.obsm:
@@ -941,52 +1002,35 @@ class MalignantClassifier:
 
             embedding_key = 'X_pca'
             
-            
-        embeddings_matrix = self.adata.obsm[embedding_key]
+        self.adata.obs['knn_classif'] = 'Unknown'
 
-        n_cells = embeddings_matrix.shape[0]
-        k_val = int(np.round(np.sqrt(n_cells)))
-        k_val = max(10, min(k_val, 90))
-        logging.info(f"K value chosen: {k_val}")
-
-        nn = NearestNeighbors(n_neighbors=k_val, metric='euclidean', n_jobs=-1)
-        nn.fit(embeddings_matrix)
-        _, nn_indices = nn.kneighbors(embeddings_matrix)
-
-        known_identities = self.adata.obs['CNV_classif'].astype(str).values
-        nn_identities = known_identities[nn_indices]
-
-        def get_majority_vote(neighborhood):
-            # Filter out missing values or standard string conversions of missing data
-            v = [cell for cell in neighborhood if cell not in ['nan', 'None'] and pd.notna(cell)]
-            if not v:
-                return "Unknown"
-                
-            total = len(v)
-            counts = Counter(v)
+        for sample_id in self.adata.obs[sample_key].unique():
+            sample_mask = self.adata.obs[sample_key] == sample_id
             
-            prop_high_conf = counts.get("Malignant-high confidence", 0) / total
-            prop_malignant = counts.get("Malignant-like", 0) / total
-            
-            combined_malignant_prop = prop_high_conf + prop_malignant
-            
-            # If the neighborhood is >= 95% tumor cells, classify as high confidence Malignant
-            if combined_malignant_prop >= 0.95:
-                return "Malignant"
-                
-            # Fallback: Collapse classes into 'Malignant' and perform standard majority vote
-            remapped_neighborhood = []
-            for cell in v:
-                if cell in ["Malignant-high confidence", "Malignant-like"]:
-                    remapped_neighborhood.append("Malignant")
-                else:
-                    remapped_neighborhood.append(cell)
-                    
-            new_counts = Counter(remapped_neighborhood)
-            
-            return new_counts.most_common(1)[0][0]
+            embeddings_matrix = self.adata.obsm[embedding_key][sample_mask]
+            n_cells = embeddings_matrix.shape[0]
 
-        self.adata.obs['knn_classif'] = [get_majority_vote(row) for row in nn_identities]
+            if n_cells > 50:
+                k_val = int(np.round(np.sqrt(n_cells)))
+                k_val = max(10, min(k_val, 90))
+
+                nn = NearestNeighbors(n_neighbors=k_val, metric='euclidean', n_jobs=-1)
+                nn.fit(embeddings_matrix)
+                _, nn_indices = nn.kneighbors(embeddings_matrix)
+
+                sample_known_identities = self.adata.obs.loc[sample_mask, 'CNV_classif'].values
+                nn_identities = sample_known_identities[nn_indices]
+
+                sample_votes = [self.get_majority_vote(row) for row in nn_identities]
+                self.adata.obs.loc[sample_mask, 'knn_classif'] = sample_votes
+
+                logging.info(f"KNN completed for sample: {sample_id} using {k_val} neighbours.")
+
+            else:
+                logging.warning(f"{sample_id} has less than 50 cells. KNN will not be computed and cells will be classified as their sample type.")
+                sample_type = sample_obs[sample_type_key].astype(str).str.lower().unique()[0]
+                self.adata.obs.loc[sample_mask, 'knn_classif'] = sample_type
+
         logging.info(">> KNN classification successfully ran")
 
 
@@ -1578,6 +1622,134 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
     plt.close(fig)
 
 
+def plot_CNV_density(adata, sample_key, sample_name=None):
+    """
+    Plots paired joint distribution metrics (continuous vs classification) per sample.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data object containing cell metrics in `.obs`.
+    sample_name : str, optional
+        Specific sample to plot. If None, plots all unique samples in `adata.obs[sample_key]`.
+    sample_key : str, default 'sample'
+        Column in `adata.obs` defining sample identifiers.
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated figure object containing the plot layout.
+    """
+    if sample_name is not None:
+        samples = [sample_name] if isinstance(sample_name, str) else list(sample_name)
+    else:
+        samples = adata.obs[sample_key].unique()
+
+    num_samples = len(samples)
+    fig = plt.figure(figsize=(14, 6 * num_samples))
+
+    # Add vertical spacing (hspace) between sample rows
+    row_subfigs = fig.subfigures(nrows=num_samples, ncols=1, hspace=0.15)
+    if num_samples == 1:
+        row_subfigs = [row_subfigs]
+
+    for i, sample in enumerate(samples):
+        adata_sample = adata[adata.obs[sample_key] == sample]
+
+        row_sf = row_subfigs[i]
+        row_sf.suptitle(f"Sample: {sample}", fontsize=16, fontweight="bold", y=0.95, x=0.45)
+
+        # Split row into two column subfigures
+        col_subfigs = row_sf.subfigures(nrows=1, ncols=2)
+        sf1, sf2 = col_subfigs[0], col_subfigs[1]
+
+        cos_cutoff = adata_sample.obs['cos_cutoff'].mean()
+        centroids_cutoff = adata_sample.obs['centroids_cutoff'].mean()
+        corr_cutoff = adata_sample.obs['corr_cutoff'].max()
+        min_val = adata_sample.obs['corr_score'].min()
+        plot_max = 1.0
+
+        # --- Custom Colormap ---
+        ratio = max(0, min(1, (corr_cutoff - min_val) / (plot_max - min_val)))
+        split_idx = int(ratio * 256)
+        
+        colors = np.zeros((256, 4))
+        colors[:split_idx] = plt.matplotlib.colors.to_rgba("#9ED5FAFF")
+        red_gradient = plt.cm.Reds(np.linspace(0.2, 1.0, 256 - split_idx))
+        colors[split_idx:] = red_gradient
+        custom_cmap = mcolors.LinearSegmentedColormap.from_list("BlueRed", colors)
+
+        # ==========================================
+        # PLOT 1: Correlation (Left Column)
+        # ==========================================
+        gs1 = sf1.add_gridspec(5, 6, wspace=0.1, hspace=0.1)
+        ax_joint1 = sf1.add_subplot(gs1[1:5, 0:4])
+        ax_marg_x1 = sf1.add_subplot(gs1[0, 0:4], sharex=ax_joint1)
+        ax_marg_y1 = sf1.add_subplot(gs1[1:5, 4], sharey=ax_joint1)
+        cax = sf1.add_subplot(gs1[2:4, 5])
+
+        sns.scatterplot(data=adata_sample.obs, x="distance_ratio", y="cos_dist", 
+                        hue="corr_score", palette=custom_cmap, hue_norm=(min_val, plot_max),
+                        s=15, linewidth=0, legend=False, ax=ax_joint1)
+        sns.kdeplot(data=adata_sample.obs, x="distance_ratio", fill=True, ax=ax_marg_x1, legend=False)
+        sns.kdeplot(data=adata_sample.obs, y="cos_dist", fill=True, ax=ax_marg_y1, legend=False)
+
+        ax_marg_x1.axis('off')
+        ax_marg_y1.axis('off')
+        ax_joint1.set_xlim(-0.05, 1.05)
+        ax_joint1.set_ylim(-0.05, 1.05)
+        ax_joint1.axhline(cos_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
+        ax_joint1.axvline(centroids_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
+
+        # Custom Right Density Bar
+        scores = adata_sample.obs['corr_score'].dropna()
+        y_grid = np.linspace(min_val, plot_max, 200)
+        kde = gaussian_kde(scores)(y_grid)
+
+        cax.imshow(y_grid[:, None], cmap=custom_cmap, aspect="auto", origin="lower", 
+                   extent=[0, kde.max() * 1.1, min_val, plot_max])
+        cax.fill_betweenx(y_grid, kde, kde.max() * 1.2, color="white")
+        cax.plot(kde, y_grid, color="black", linewidth=1)
+        cax.axhline(corr_cutoff, color="black", linestyle="--", linewidth=1)
+
+        cax.set_ylim(min_val, plot_max)
+        cax.set_xlim(0, kde.max() * 1.1)
+        cax.set_title("corr_score", pad=8, fontsize=10)
+        cax.yaxis.tick_right()
+        cax.yaxis.set_label_position("right")
+        cax.set_xticks([]) 
+        for spine in ['top', 'left', 'bottom']:
+            cax.spines[spine].set_visible(False)
+
+        # ==========================================
+        # PLOT 2: CNV Classification (Right Column)
+        # ==========================================
+        gs2 = sf2.add_gridspec(5, 5, wspace=0.1, hspace=0.1)
+        ax_joint2 = sf2.add_subplot(gs2[1:5, 0:4])
+        ax_marg_x2 = sf2.add_subplot(gs2[0, 0:4], sharex=ax_joint2)
+        ax_marg_y2 = sf2.add_subplot(gs2[1:5, 4], sharey=ax_joint2)
+
+        # Fallback check for column name
+        classif_col = 'malignant_classif_cnv' if 'malignant_classif_cnv' in adata_sample.obs.columns else 'CNV_classif'
+
+        sns.scatterplot(data=adata_sample.obs, x="distance_ratio", y="cos_dist", 
+                        hue=classif_col, s=15, linewidth=0, ax=ax_joint2)
+        sns.kdeplot(data=adata_sample.obs, x="distance_ratio", fill=True, ax=ax_marg_x2, legend=False)
+        sns.kdeplot(data=adata_sample.obs, y="cos_dist", fill=True, ax=ax_marg_y2, legend=False)
+
+        ax_marg_x2.axis('off')
+        ax_marg_y2.axis('off')
+        ax_joint2.set_xlim(-0.05, 1.05)
+        ax_joint2.set_ylim(-0.05, 1.05)
+        ax_joint2.axhline(cos_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
+        ax_joint2.axvline(centroids_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
+
+        sns.move_legend(ax_joint2, loc="upper center", bbox_to_anchor=(0.5, -0.15), 
+                        ncols=3, frameon=False, title="")
+
+    return fig
+
+
 def plot_report_01(adata, cell_type_key, sample_key):
 
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
@@ -1719,84 +1891,7 @@ def plot_report_01(adata, cell_type_key, sample_key):
     return fig
         
 
-def plot_report_02(adata, cell_type_key):
-
-    fig = plt.figure(figsize=(15, 12))
-    gs = GridSpec(2, 2, figure=fig)
-
-    ax1 = fig.add_subplot(gs[0, :])  
-    ax3 = fig.add_subplot(gs[1, 0])  
-    ax4 = fig.add_subplot(gs[1, 1])
-
-    # ---- 1. Malignant score ridges (ax1) ----------
-    plot_density_ridges(
-        adata, 
-        value_col='malignant_score', 
-        cutoff_col_1='malignant_cutoff_real', 
-        cutoff_col_2='malignant_cutoff_strict', 
-        x_label='Malignant Score',
-        ax=ax1 
-    )
-
-    # -------- cell types UMAP (ax3) -------------
-    sc.pl.embedding(
-        adata,
-        basis='X_umap', 
-        color=cell_type_key,  
-        show=False,
-        size=10,     
-        ax=ax3,          
-        frameon=True,
-        title='Cell type',
-        legend_loc='none'
-    )
-
-    ax3.set_title('Cell type', fontweight='bold', fontsize=16, pad= 12)
-
-    cell_types = adata.obs[cell_type_key].cat.categories
-    colors = adata.uns['cell_type_colors']
-
-    legend_elements = [
-        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
-        for label, c in zip(cell_types, colors)
-    ]
-
-    ax3.legend(
-        handles=legend_elements,
-        loc='upper center',
-        bbox_to_anchor=(0.5, -0.05), 
-        ncol=4,                       
-        frameon=False,                  
-        fontsize=12                 
-    )
-
-    ax3.spines['top'].set_visible(False)
-    ax3.spines['right'].set_visible(False)
-
-
-    # ---- Malignant score UMAP (ax4) ----------
-    sc.pl.embedding(
-        adata,
-        basis='X_umap', 
-        color='malignant_score',  
-        show=False,
-        size=15,           
-        frameon=True,
-        ax=ax4 
-    )
-
-    ax4.set_title('Malignant score', fontweight='bold', fontsize=16, pad= 12)
-    ax4.spines['top'].set_visible(False)
-    ax4.spines['right'].set_visible(False)
-
-
-    plt.tight_layout()
-    plt.subplots_adjust(wspace=0.2, hspace=0.3)
-
-    return fig
-
-
-def plot_report_03(adata):
+def plot_report_02(adata):
 
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
 
@@ -2364,7 +2459,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
                 fontsize=11, fontweight=font_weight
             )
 
-        # 9. Legends and Colorbars Panel
+        # Legends and Colorbars Panel
         heatmap_span_rows = chr_row_idx
         
         gs_right = GridSpecFromSubplotSpec(
@@ -2458,9 +2553,11 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     classifier.get_corr_scores(n_jobs= n_jobs)
 
-    classifier.get_malignant_score(groupby= sample_key)
+    classifier.get_malignant_classif(groupby= sample_key)
 
-    classifier.knn_malignant_classification(embedding_key='X_pca')
+    classifier.get_malignant_score()
+
+    classifier.knn_malignant_classification(sample_key, sample_type_key, embedding_key='X_pca')
 
     classifier.final_classification()
 
@@ -2491,14 +2588,20 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
         plt.close(fig1)
         
         # --- PAGE 2 ---
-        fig2 = plot_report_02(classifier.adata, cell_type_key)
+        fig2 = plot_report_02(classifier.adata)
         pdf.savefig(fig2, bbox_inches='tight')
         plt.close(fig2)
 
         # --- PAGE 3 ---
-        fig3 = plot_report_03(classifier.adata)
-        pdf.savefig(fig3, bbox_inches='tight')
-        plt.close(fig3)
+        samples = classifier.adata.obs[sample_key].unique()
+        samples_per_page = 3
+        for i in range(0, len(samples), samples_per_page):
+            sample_batch = samples[i:i + samples_per_page]
+            
+            # Pass the list/array of samples to plot_CNV_density
+            fig_page = plot_CNV_density(classifier.adata, sample_key=sample_key, sample_name=sample_batch)
+            pdf.savefig(fig_page, bbox_inches='tight')
+            plt.close(fig_page)
 
     logging.info(">> Metrics report generated!")
 
