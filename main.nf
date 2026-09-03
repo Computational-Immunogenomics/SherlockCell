@@ -62,7 +62,7 @@ workflow {
         params.swiftCNV.HMM,
         params.swiftCNV.plot_cnv,
         params.swiftCNV.sex_chr,
-        params.cutoff
+        params.swiftCNV.cutoff
     )
 
     ch_malig_input = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key ->
