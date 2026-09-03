@@ -30,6 +30,8 @@ def format_anndata(adata_path):
 
     adata = sc.read_h5ad(adata_path)
 
+    adata.uns = {} # adata.uns can be problematic
+
     adata_trans = adata.transpose()
 
 
