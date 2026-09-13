@@ -2557,7 +2557,7 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     classifier.get_malignant_score()
 
-    classifier.knn_malignant_classification(sample_key, sample_type_key, embedding_key='X_pca')
+    classifier.knn_malignant_classification(sample_key, sample_type_key, embedding_key='X_umap')
 
     classifier.final_classification()
 
