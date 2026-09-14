@@ -5,3 +5,4 @@ sherlockcell.sh
 history
 .nextflow/history
 nextflow.config
+samplesheets/samplesheet.tsv
