@@ -4,3 +4,4 @@ sherlockcell.sh
 .nvm/
 history
 .nextflow/history
+nextflow.config
