@@ -92,7 +92,7 @@ def plot_cell_type_percentages(adata, cell_type_key, dataset):
     """
     print(f">> Creating cell percentage plot for {dataset}")
 
-    print(adata.obs.groupby(['cell_type', 'reference'], observed=False).size())
+    print(adata.obs.groupby([cell_type_key, 'reference'], observed=False).size())
 
     query_cells = adata.obs[~adata.obs['reference']].copy()
 

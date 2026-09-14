@@ -836,7 +836,7 @@ class MalignantClassifier:
                 pdf.savefig(fig, bbox_inches='tight')
                 plt.close(fig)
                 
-        logging.info(">> Seaborn hotspot arms report saved!")
+        logging.info(">> Hotspot arms report saved!")
 
 
     def get_malignant_classif(self, groupby=None):
@@ -980,22 +980,40 @@ class MalignantClassifier:
             return "Unknown"
             
         total = len(v)
+        counts = Counter(v)
+        
+        prop_high_conf = counts.get("Malignant-high confidence", 0) / total
 
-        malignant_count = sum(1 for cell in v if cell in ["Malignant-high confidence", "Malignant-like"])
+        if prop_high_conf < 0.30:
+            prop_normal = counts.get("Normal", 0) / total
             
-        # If more than 90% of the cells are Malignant-high confidence, it will be classified as malignant
-        if (malignant_count / total) >= 0.90:
+            if prop_normal > 0.20:
+                # If there is a meaningful normal presence, assume it's a healthy neighborhood
+                v = ["Normal" if cell == "Malignant-like" else cell for cell in v]
+                
+                # Recalculate proportions without the unbacked Malignant-like cells
+                counts = Counter(v)
+                prop_high_conf = counts.get("Malignant-high confidence", 0) / total
+                
+        prop_malignant = counts.get("Malignant-like", 0) / total
+        combined_malignant_prop = prop_high_conf + prop_malignant
+
+        if combined_malignant_prop >= 0.95:
             return "Malignant"
-        else:
-            return "Normal"
+
+        v = ["Malignant" if cell in ["Malignant-high confidence", "Malignant-like"] else cell for cell in v]
+        new_counts = Counter(v)
+        
+        # Return the majority class (mode)
+        return new_counts.most_common(1)[0][0]
 
 
-    def knn_malignant_classification(self, sample_key, sample_type_key, embedding_key='X_umap'):
-        logging.info(">> Computing KNN classification by sample...")
-
-        if embedding_key is None or embedding_key not in self.adata.obsm:
+    def knn_malignant_classification(self, sample_key, sample_type_key, embedding_key):
+        logging.info(f">> Computing KNN classification by sample using {embedding_key}...")
+        
+        if embedding_key not in self.adata.obsm:
             if 'X_pca' not in self.adata.obsm:
-                logging.info('Embbeding key not in adata.obs, generating PCA embbeding.')
+                logging.info(f'Embbeding key {embedding_key} not in adata.obsm, generating PCA embbeding.')
                 self.generate_pca()
             else:
                 logging.info('X_pca found in adata.obs, running knn classification from it.')
@@ -1027,9 +1045,9 @@ class MalignantClassifier:
                 logging.info(f"KNN completed for sample: {sample_id} using {k_val} neighbours.")
 
             else:
-                logging.warning(f"{sample_id} has less than 50 cells. KNN will not be computed and cells will be classified as their sample type.")
-                sample_type = sample_obs[sample_type_key].astype(str).str.lower().unique()[0]
-                self.adata.obs.loc[sample_mask, 'knn_classif'] = sample_type
+                logging.warning(f"{sample_id} has less than 50 cells. KNN will not be computed and cells will be classified as their CNV state.")
+                CNV_state = self.adata.obs.loc[sample_mask, 'CNV_classif']
+                self.adata.obs.loc[sample_mask, 'knn_classif'] = CNV_state
 
         logging.info(">> KNN classification successfully ran")
 
@@ -1690,7 +1708,7 @@ def plot_CNV_density(adata, sample_key, sample_name=None):
 
         sns.scatterplot(data=adata_sample.obs, x="distance_ratio", y="cos_dist", 
                         hue="corr_score", palette=custom_cmap, hue_norm=(min_val, plot_max),
-                        s=15, linewidth=0, legend=False, ax=ax_joint1)
+                        s=15, linewidth=0, legend=False, ax=ax_joint1, rasterized=True)
         sns.kdeplot(data=adata_sample.obs, x="distance_ratio", fill=True, ax=ax_marg_x1, legend=False)
         sns.kdeplot(data=adata_sample.obs, y="cos_dist", fill=True, ax=ax_marg_y1, legend=False)
 
@@ -1698,23 +1716,35 @@ def plot_CNV_density(adata, sample_key, sample_name=None):
         ax_marg_y1.axis('off')
         ax_joint1.set_xlim(-0.05, 1.05)
         ax_joint1.set_ylim(-0.05, 1.05)
+
+        ax_joint1.set_xlabel("Distance Ratio", fontsize=10)
+        ax_joint1.set_ylabel("Cosine Distance", fontsize=10)
+
         ax_joint1.axhline(cos_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
         ax_joint1.axvline(centroids_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
 
         # Custom Right Density Bar
         scores = adata_sample.obs['corr_score'].dropna()
         y_grid = np.linspace(min_val, plot_max, 200)
-        kde = gaussian_kde(scores)(y_grid)
+
+        if len(scores) > 1 and scores.nunique() > 1:
+            kde = gaussian_kde(scores)(y_grid)
+        else:
+            # Fallback for 0-variance or single-cell data 
+            # Creates a small flat line so the plotting functions don't crash
+            kde = np.ones_like(y_grid) * 0.1
+
+        kde_max = kde.max() if kde.max() > 0 else 1.0
 
         cax.imshow(y_grid[:, None], cmap=custom_cmap, aspect="auto", origin="lower", 
-                   extent=[0, kde.max() * 1.1, min_val, plot_max])
-        cax.fill_betweenx(y_grid, kde, kde.max() * 1.2, color="white")
+                   extent=[0, kde_max * 1.1, min_val, plot_max])
+        cax.fill_betweenx(y_grid, kde, kde_max * 1.2, color="white")
         cax.plot(kde, y_grid, color="black", linewidth=1)
         cax.axhline(corr_cutoff, color="black", linestyle="--", linewidth=1)
 
         cax.set_ylim(min_val, plot_max)
-        cax.set_xlim(0, kde.max() * 1.1)
-        cax.set_title("corr_score", pad=8, fontsize=10)
+        cax.set_xlim(0, kde_max * 1.1)
+        cax.set_title("Corr. score", pad=8, fontsize=10)
         cax.yaxis.tick_right()
         cax.yaxis.set_label_position("right")
         cax.set_xticks([]) 
@@ -1733,7 +1763,7 @@ def plot_CNV_density(adata, sample_key, sample_name=None):
         classif_col = 'malignant_classif_cnv' if 'malignant_classif_cnv' in adata_sample.obs.columns else 'CNV_classif'
 
         sns.scatterplot(data=adata_sample.obs, x="distance_ratio", y="cos_dist", 
-                        hue=classif_col, s=15, linewidth=0, ax=ax_joint2)
+                        hue=classif_col, s=15, linewidth=0, ax=ax_joint2, rasterized=True)
         sns.kdeplot(data=adata_sample.obs, x="distance_ratio", fill=True, ax=ax_marg_x2, legend=False)
         sns.kdeplot(data=adata_sample.obs, y="cos_dist", fill=True, ax=ax_marg_y2, legend=False)
 
@@ -1741,6 +1771,10 @@ def plot_CNV_density(adata, sample_key, sample_name=None):
         ax_marg_y2.axis('off')
         ax_joint2.set_xlim(-0.05, 1.05)
         ax_joint2.set_ylim(-0.05, 1.05)
+
+        ax_joint2.set_xlabel("Distance Ratio", fontsize=10)
+        ax_joint2.set_ylabel("Cosine Distance", fontsize=10)
+
         ax_joint2.axhline(cos_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
         ax_joint2.axvline(centroids_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
 
