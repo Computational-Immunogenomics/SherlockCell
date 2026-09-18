@@ -20,7 +20,7 @@ process swiftCNV{
 
     
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), path(cell_annots), val(num_cells)
+        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(embedding_key), val(exclude_from_reference), path(cell_annots), val(num_cells)
         path gene_annots
         val hmm
         val plot

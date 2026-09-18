@@ -22,8 +22,10 @@ workflow {
             def sample_key    = row.sample_key ?: params.sample_key
             def cell_type_key = row.cell_type_key ?: params.cell_type_key
             def sample_type_key = row.sample_type_key ?: params.sample_type_key
-        
-            return tuple(row.dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key) 
+            def embedding_key = row.embedding_key ?: params.embedding_key
+            def exclude_from_reference = row.exclude_from_reference ?: null
+
+            return tuple(row.dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference) 
         }
 
     def geneAnnots = params.swiftCNV?.gene_annots
@@ -32,7 +34,7 @@ workflow {
 
     gene_annots_file = file(geneAnnots)
 
-    ch_count_input = ch_data_dirs.map { dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key -> 
+    ch_count_input = ch_data_dirs.map { dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference -> 
         tuple(dataset, adata_path, out_dir) }
     
     count_cells(ch_count_input)
@@ -42,8 +44,8 @@ workflow {
 
     SCF(ch_SCF)
 
-    ch_swiftCNV_annots = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key ->
-        tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key)}
+    ch_swiftCNV_annots = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference ->
+        tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, exclude_from_reference)}
         .join(count_cells.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
         .join(SCF.out.anndata)
         .join(SCF.out.scf_predictions)
@@ -65,8 +67,8 @@ workflow {
         params.swiftCNV.cutoff
     )
 
-    ch_malig_input = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key ->
-        tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key)}
+    ch_malig_input = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference ->
+        tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key)}
         .join(SCF.out.anndata)
         .join(swiftCNV.out.cnv_scores)
         .join(swiftCNV.out.gene_order_swiftCNV)

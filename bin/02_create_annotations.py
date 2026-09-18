@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import argparse
 
-def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_type_key, scf_annots):
+def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_type_key, exclude_from_reference, scf_annots):
 
     if cell_origin is None:
         raise ValueError(f"Tumor cell of origin has to be specified.")
@@ -22,6 +22,10 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
         if sample_type_key not in adata.obs.columns:
             raise KeyError(f"'{sample_type_key}' not found in adata.obs columns.")
 
+    # remove index name if present
+    if adata.obs.index.name:
+        adata.obs.index.name = ""
+
     label_map = {1.0: 'Malignant', 0.0: 'Normal', 1: 'Malignant', 0: 'Normal'}
     scf_annots['predict'] = scf_annots['predict'].map(label_map)
 
@@ -35,6 +39,13 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
         cell_origin_list = list(cell_origin)
     else:
         cell_origin_list = []
+
+    if isinstance(exclude_from_reference, str):
+        exclude_cell_origin_list = [item.strip() for item in exclude_from_reference.split(',')]
+    elif exclude_from_reference is not None:
+        exclude_cell_origin_list = list(exclude_from_reference)
+    else:
+        exclude_cell_origin_list = []
 
     adata.obs["reference"] = False
 
@@ -76,11 +87,18 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
     if len(na_cells) > 0:
         adata.obs.loc[na_cells, "reference"] = False
 
+    
+    if exclude_from_reference:
+        exclude_cells = adata.obs[cell_type_key].isin(exclude_cell_origin_list)
+        adata.obs.loc[exclude_cells, "reference"] = False
+
 
     # Format output
-    annotation = adata.obs[['reference']].copy()
-    annotation['sample'] = adata.obs[sample_key].values
-    annotation = annotation.reset_index().rename(columns={"index": "cell_name"})
+    annotation = pd.DataFrame({
+        'cell_name': adata.obs.index.values,
+        'reference': adata.obs['reference'].values,
+        'sample': adata.obs['sample'].values
+    })
     
     return annotation
 
@@ -92,7 +110,9 @@ def plot_cell_type_percentages(adata, cell_type_key, dataset):
     """
     print(f">> Creating cell percentage plot for {dataset}")
 
-    print(adata.obs.groupby([cell_type_key, 'reference'], observed=False).size())
+    print(adata.obs.groupby([cell_type_key, 'reference'], observed=True).size())
+
+    adata.obs["reference"] = adata.obs["reference"].fillna(False).astype(bool)
 
     query_cells = adata.obs[~adata.obs['reference']].copy()
 
@@ -157,17 +177,13 @@ def plot_cell_type_percentages(adata, cell_type_key, dataset):
     print(f">> Cell percentage plot created!")
     
 
-def main(adata_path, dataset, cell_type_key, sample_key, scf_annots, cell_origin=None, sample_type_key = None):
+def main(adata_path, dataset, cell_type_key, sample_key, scf_annots, cell_origin, sample_type_key, exclude_from_reference):
 
     adata = sc.read_h5ad(adata_path)
 
     scf_annots = pd.read_csv(scf_annots)
 
-    annotation = create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_type_key, scf_annots)
-
-    annotation_map = annotation.set_index('cell_name')['reference']
-
-    adata.obs['reference'] = adata.obs.index.map(annotation_map)
+    annotation = create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_type_key, exclude_from_reference, scf_annots)
 
     annotation.to_csv(f'cell_annotations_{dataset}.tsv', sep='\t', index=False)
 
@@ -182,6 +198,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--cell_origin', required=True, help='Tumor cell type of origin.')
     parser.add_argument('-s','--sample_type_key', required=True, help='Column from adata.obs where sample type information is stored. Only "tumor" or "normal" labels are allowed.')
     parser.add_argument('-p', '--sample_key', required=True, help='Column from adata.obs where sample information is stored.')
+    parser.add_argument('-x', '--exclude_from_reference', required=True, help='Cell type(s) to exclude frow SwiftCNV reference.')
     parser.add_argument('-m', '--scf_annots', required=True, help='Predictions from Sequecing Malignang Classifier.')
 
     args = parser.parse_args()
@@ -192,5 +209,6 @@ if __name__ == "__main__":
         cell_origin = args.cell_origin,
         sample_key = args.sample_key,
         sample_type_key = args.sample_type_key,
+        exclude_from_reference = args.exclude_from_reference,
         scf_annots=args.scf_annots
     )

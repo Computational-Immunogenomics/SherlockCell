@@ -18,7 +18,7 @@ process create_swiftCNV_annots {
         }
 
     input:
-        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(num_cells), path(anndata), path(scf_predictions)
+        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(exclude_from_reference), val(num_cells), path(anndata), path(scf_predictions)
 
     output:
         tuple val(dataset), path("cell_annotations_*.tsv"), emit: cell_annots
@@ -31,6 +31,6 @@ process create_swiftCNV_annots {
         echo "${out_dir}" > .task_outdir
 
         02_create_annotations.py -a ${anndata} -d ${dataset} \\
-            -t ${cell_type_key} -s ${sample_type_key} -p ${sample_key} -m ${scf_predictions} ${origin_flag} 
+            -t ${cell_type_key} -s ${sample_type_key} -p ${sample_key} -x ${exclude_from_reference} -m ${scf_predictions} ${origin_flag} 
         """
         }

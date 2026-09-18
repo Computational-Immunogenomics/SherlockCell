@@ -51,7 +51,7 @@ def _add_mat_to_adata(adata, matrix, genes, cells, key_added='cnv_mat'):
     common_cells = adata.obs_names.intersection(cnv_df.index)
 
     if len(common_cells) < len(adata.obs_names):
-        print(f"Warning: {len(adata.obs_names) - len(common_cells)} cells in adata are not present in the infercnv output. They will be removed from adata.")
+        logging.warning(f"{len(adata.obs_names) - len(common_cells)} cells in adata are not present in the infercnv output. They will be removed from adata.")
 
     adata = adata[common_cells].copy()
 
@@ -1139,7 +1139,7 @@ class MalignantClassifier:
         .astype('category'))
                 
 
-    def dbscan_outlier(self, classif_col='malignant_classif', embedding_key='X_umap', groupby='sample'):
+    def dbscan_outlier(self, embedding_key, classif_col='malignant_classif', groupby='sample'):
         """
         Runs sample-wise DBSCAN on the UMAP embeddings of malignant cells to detect 
         and label outliers. Creates a True/False flag column.
@@ -1778,8 +1778,9 @@ def plot_CNV_density(adata, sample_key, sample_name=None):
         ax_joint2.axhline(cos_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
         ax_joint2.axvline(centroids_cutoff, color="black", linestyle="--", linewidth=1.2, zorder=0)
 
-        sns.move_legend(ax_joint2, loc="upper center", bbox_to_anchor=(0.5, -0.15), 
-                        ncols=3, frameon=False, title="")
+        if ax_joint2.get_legend() is not None:
+            sns.move_legend(ax_joint2, loc="upper center", bbox_to_anchor=(0.5, -0.15), 
+                            ncols=3, frameon=False, title="")
 
     return fig
 
@@ -2566,7 +2567,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
     logging.info(">> CNV Heatmap by Sample succesfully generated!")
 
 
-def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_annots, cell_of_origin, sample_type_key, dataset, n_jobs, verbose=True):
+def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_annots, cell_of_origin, sample_type_key, embedding_key, dataset, n_jobs, verbose=True):
 
     logging.basicConfig(
         level=logging.INFO if verbose else logging.WARNING,
@@ -2581,6 +2582,12 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     adata = load_output(adata, cnv_scores, gene_annots, cell_annots)
 
+    if embedding_key not in adata.obsm:
+        logging.warning(f"{embedding_key} not present in adata.obsm! setting X_umap as default.")
+        
+        embedding_key = 'X_umap'
+
+
     summarise_by_chr_arm(adata)
 
     classifier = MalignantClassifier(adata, sample_key= sample_key, cell_type_key= cell_type_key, cell_of_origin= cell_of_origin, sample_type_key= sample_type_key, verbose= verbose)
@@ -2591,11 +2598,11 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     classifier.get_malignant_score()
 
-    classifier.knn_malignant_classification(sample_key, sample_type_key, embedding_key='X_umap')
+    classifier.knn_malignant_classification(sample_key, sample_type_key, embedding_key=embedding_key)
 
     classifier.final_classification()
 
-    classifier.dbscan_outlier()
+    classifier.dbscan_outlier(embedding_key=embedding_key, groupby= sample_key)
 
     # ------ Plots --------------
 
@@ -2675,6 +2682,7 @@ if __name__ == "__main__":
     parser.add_argument('-s','--sample_key', required=True, help='Column in adata.obs with sample information.')
     parser.add_argument('-c','--cell_type_key', required=True, help='Column in adata.obs with cell type labels.')
     parser.add_argument('-t','--sample_type_key', required=True, help='Column in adata.obs with sample type information. Valid values are "Tumor" or "Normal".')
+    parser.add_argument('-e','--embedding_key', required=True, help='adata.obsm layer with the embedding to use for KNN malignant classification.')
     parser.add_argument('-d','--dataset', required=True, help='Name of the dataset.')
     parser.add_argument('-j','--n_jobs', required=True, type=int, default=2, help='Number of CPUs to use.')
 
@@ -2689,6 +2697,7 @@ if __name__ == "__main__":
         sample_key= args.sample_key,
         cell_type_key= args.cell_type_key,
         sample_type_key= args.sample_type_key,
+        embedding_key = args.embedding_key,
         dataset= args.dataset,
         n_jobs= args.n_jobs
     )

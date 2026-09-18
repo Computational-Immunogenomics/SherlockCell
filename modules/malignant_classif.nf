@@ -19,7 +19,7 @@ process malignant_classif{
 
 
     input:
-        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), path(anndata), path(cnv_scores), path(gene_annots), path(cell_annots), val(num_cells)
+        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(embedding_key), val(exclude_from_reference), path(anndata), path(cnv_scores), path(gene_annots), path(cell_annots), val(num_cells)
 
     output:
         tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmaps
@@ -42,6 +42,7 @@ process malignant_classif{
             -s "${sample_key}" \\
             -c "${cell_type_key}" \\
             -t "${sample_type_key}" \\
+            -e "${embedding_key}" \\
             ${origin_flag} \\
             -g "${gene_annots}" \\
             -n "${cell_annots}" \\
