@@ -26,9 +26,8 @@ The input parameters for SherlockCell are passed throught a samplesheet.tsv file
 
 SherlockCell creates several reports for each classification step. An overview of all output files is shown in the figure below.
 
-<img src="docs/images/output_files.jpg" alt="output_files" align="center" style="width: 400px; height: auto;">  
+<img src="docs/images/output_files.jpg" alt="output_files" align="center" style="width: 450px; height: auto;">  
 
-<br>
 
 The image UMAP_malignant_classif shows the result of the malignant classification in the UMAP emmbedding.  
 
