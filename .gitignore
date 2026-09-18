@@ -3,6 +3,6 @@ sherlockcell.sh
 .nextflow/
 .nvm/
 history
-.nextflow/history
 nextflow.config
 samplesheets/samplesheet.tsv
+conf/process.config
