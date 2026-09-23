@@ -17,9 +17,9 @@ A detailed explanation of the malignant classification pipeline can be found in 
 
 The input parameters for SherlockCell are passed throught a samplesheet.tsv file containing these fields:
 
-| dataset | adata_path | outdir | cell_origin | cell_type_key | sample_key | sample_type_key |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| <span style="white-space: nowrap;">datase_name</span> | <span style="white-space: nowrap;">/path/to/adata.h5ad</span> | <span style="white-space: nowrap;">/path/to/outdir</span> | <span style="white-space: nowrap;">T-cells, Macrophages</span> | cell_type | sample | sample_type |
+| dataset | adata_path | outdir | cell_origin | cell_type_key | sample_key | sample_type_key | embedding_key | exlude_from_reference
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| dataset_name | /&#8288;path/&#8288;to/&#8288;adata.h5ad | /&#8288;path/&#8288;to/&#8288;outdir |T_cells,&nbsp;Macrophages| cell_type | sample | sample_type | X_pca | Hepatocytes |
 
 
 ## Output files
