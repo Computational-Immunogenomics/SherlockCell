@@ -68,7 +68,7 @@ workflow {
     )
 
     ch_malig_input = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference ->
-        tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key)}
+        tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference)}
         .join(SCF.out.anndata)
         .join(swiftCNV.out.cnv_scores)
         .join(swiftCNV.out.gene_order_swiftCNV)
