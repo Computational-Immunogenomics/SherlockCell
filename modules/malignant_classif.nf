@@ -9,10 +9,10 @@ process malignant_classif{
         
         long n = num_cells 
 
-        def base = n < 80000  ? 15.GB :
-                n < 120000  ? 30.GB :
-                n < 200000 ? 60.GB :
-                                80.GB
+        def base = n < 80000  ? 30.GB :
+                n < 120000  ? 60.GB :
+                n < 200000 ? 100.GB :
+                                120.GB
 
         return base * attempt 
         }
