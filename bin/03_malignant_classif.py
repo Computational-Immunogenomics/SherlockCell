@@ -505,8 +505,17 @@ class MalignantClassifier:
 
             if len(fallback_hotspots) > 0:
                 logging.info(f"({sample_id}) Found {len(fallback_hotspots)} hotspot arms from cells of origin!")
+
+                sex_arms = ['Xp', 'Xq', 'Yp', 'Yq']
+                common = list(set(sex_arms) & set(fallback_hotspots))
+
+                if common:
+                    for arm in common:
+                        fallback_hotspots.remove(arm)
+
                 chrarms_df['hotspotarm'] = np.where(chrarms_df['chrarms'].isin(fallback_hotspots), "Yes", "No")
                 cnv_p_mat_sub_hotarms = cnv_mat[fallback_hotspots]
+                
             else:
                 logging.info(f"({sample_id}) No additional hotspot arms found. Using all arms.")
                 chrarms_df['hotspotarm'] = "No"
@@ -2602,7 +2611,7 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     classifier.final_classification()
 
-    classifier.dbscan_outlier(embedding_key=embedding_key, groupby= sample_key)
+    classifier.dbscan_outlier(embedding_key='X_umap', groupby= sample_key)
 
     # ------ Plots --------------
 
