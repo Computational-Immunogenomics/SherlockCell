@@ -37,10 +37,16 @@ The image UMAP_malignant_classif shows the result of the malignant classificatio
   
 <br>
 
-Additionally, a figure showing the distributions of the three malignancy scores and the classification thresholds used for each sample is provided along with other plots in the reannot_metrics_plots.pdf file.
+Moreover, a figure showing the distributions of the three malignancy scores and the classification thresholds used for each sample is provided along with other plots in the reannot_metrics_plots.pdf file.
 
 <br>
 
 <img src="docs/images/scores_distrib.png" alt="Scores distribution" align="center">
 
+<br>
 
+Finally, the CNV heatmaps with the cell type annotation and the classification results at each step is provided in the CNV_heatmaps_samples.pdf file. The hotspot chromosome arms identified are highlighted in bold.
+
+<img src="docs/images/CNV_heatmaps_samples.jpg" alt="CNV_heatmaps_samples" align="center">
+
+<br>
