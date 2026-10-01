@@ -20,7 +20,7 @@ process swiftCNV{
 
     
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(embedding_key), val(exclude_from_reference), path(cell_annots), val(num_cells)
+        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(embedding_key), val(exclude_from_reference), val(counts_in_X), path(cell_annots), val(num_cells)
         path gene_annots
         val hmm
         val plot
@@ -42,6 +42,7 @@ process swiftCNV{
         def hmm_arg = hmm ? "--hmm" : ""
         def plot_arg = plot ? "--plot" : ""
         def sex_chr_arg = sex_chr ? "--sex-chr" : ""
+        def counts_in_X_arg = (counts_in_X as Boolean) ? "-X" : ""
 
         """
         echo "${out_dir}" > .task_outdir
@@ -56,7 +57,8 @@ process swiftCNV{
           --cutoff ${cutoff} \\
           ${hmm_arg} \\
           ${plot_arg} \\
-          ${sex_chr_arg}
+          ${sex_chr_arg} \\
+          ${counts_in_X_arg}
         """
 
 }
