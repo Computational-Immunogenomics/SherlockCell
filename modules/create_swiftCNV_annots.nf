@@ -9,7 +9,8 @@ process create_swiftCNV_annots {
             
             long n = num_cells 
 
-            def base = n < 50000  ? 10.GB :
+            def base = n < 20000  ? 5.GB :
+                    n < 50000  ? 10.GB :
                     n < 100000 ? 20.GB :
                     n < 500000 ? 30.GB :
                                     40.GB

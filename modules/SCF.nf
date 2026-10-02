@@ -9,7 +9,8 @@ process SCF {
             
             long n = num_cells 
 
-            def base = n < 50000  ? 20.GB :
+            def base = n < 20000  ? 10.GB :
+                    n < 50000  ? 20.GB :
                     n < 100000 ? 40.GB :
                     n < 200000 ? 60.GB :
                                     80.GB
