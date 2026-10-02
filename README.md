@@ -21,6 +21,11 @@ The input parameters for SherlockCell are passed throught a samplesheet.tsv file
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | dataset_name | /&#8288;path/&#8288;to/&#8288;adata.h5ad | /&#8288;path/&#8288;to/&#8288;outdir |T_cells,&nbsp;Macrophages| cell_type | sample | sample_type | X_pca | Hepatocytes |
 
+To run the test data you can do:
+
+```bash
+nextflow run main.nf -profile test
+```
 
 ## Output files
 
