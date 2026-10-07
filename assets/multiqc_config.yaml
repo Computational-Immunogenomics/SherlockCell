@@ -1,0 +1,34 @@
+title: SherlockCell report
+template_dark_mode: false
+simple_output: true
+custom_logo: SherlockCell_full.png
+custom_logo_title: SherlockCell
+custom_data:
+  swiftcnv:
+    section_name: SwiftCNV groups
+    description: Query cell proportion plots from SwiftCNV.
+    plot_type: image
+  malignant_classification:
+    section_name: Malignant cell classifier
+    plot_type: image
+output_fn_name: sherlockcell_report.html
+sp:
+  swiftcnv:
+    fn: '*_query_cell_props.png'
+  malignant_classification:
+    fn: '*_classif*.png'
+report_comment: |-
+  <p>This report was generated from <a href="https://github.com/Computational-Immunogenomics/SherlockCell">SherlockCell</a> on <span id="generation-date"></span>.</p>
+
+  <script>
+    const now = new Date();
+    
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+
+    const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}`;
+    document.getElementById("generation-date").textContent = formattedDate;
+  </script>

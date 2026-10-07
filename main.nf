@@ -8,6 +8,7 @@ include { SCF } from './modules/SCF'
 include { create_swiftCNV_annots } from './modules/create_swiftCNV_annots'
 include { swiftCNV } from './modules/swiftCNV'
 include { malignant_classif } from './modules/malignant_classif'
+include { multiqc } from './modules/multiqc'
 
 workflow {
 
@@ -78,6 +79,20 @@ workflow {
 
     
     malignant_classif(ch_malig_input)
+
+    // Group all plots across all datasets into a single collection
+    ch_multiqc_files = create_swiftCNV_annots.out.query_pcts_plot
+        .mix(
+            malignant_classif.out.umap_classif,
+            malignant_classif.out.cnv_summary_heatmap
+        )
+        .collect()
+
+    multiqc(
+    file("${projectDir}/assets/multiqc_config.yaml"),
+    file("${projectDir}/docs/images/SherlockCell_full.png"),
+    ch_multiqc_files
+)
 
 
 }
