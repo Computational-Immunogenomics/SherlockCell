@@ -1,14 +1,15 @@
 process multiqc {
-    publishDir "${params.outdir}/multiqc", mode: 'copy'
+    label "multiqc"
+    publishDir path: { "${out_dir}/multiqc" }, mode: 'copy'
 
     input:
     path multiqc_config
     path logo
     path plots
+    val out_dir
 
     output:
     path "sherlockcell_report.html", emit: report
-    path "sherlockcell_report_data", emit: data
 
     script:
     """
