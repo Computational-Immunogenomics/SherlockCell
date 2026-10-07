@@ -51,7 +51,7 @@ def _add_mat_to_adata(adata, matrix, genes, cells, key_added='cnv_mat'):
     common_cells = adata.obs_names.intersection(cnv_df.index)
 
     if len(common_cells) < len(adata.obs_names):
-        logging.warning(f"{len(adata.obs_names) - len(common_cells)} cells in adata are not present in the infercnv output. They will be removed from adata.")
+        logging.warning(f"{len(adata.obs_names) - len(common_cells)} cells in adata are not present in the swiftCNV output. They will be removed from adata.")
 
     adata = adata[common_cells].copy()
 
@@ -80,7 +80,7 @@ def _add_mat_to_adata(adata, matrix, genes, cells, key_added='cnv_mat'):
 
 def load_output(adata, cnv_scores, gene_annots, cell_annots):
     """
-    Add the infercnv output matrix to an AnnData object as obsm layer.
+    Add the swiftCNV output matrix to an AnnData object as obsm layer.
     
     Parameters:
     - adata: AnnData object to which the matrix will be added.
@@ -398,13 +398,13 @@ class MalignantClassifier:
             raise ValueError(f'Invalid sample type: {sample_type}. Please set it as "tumor" or "normal".')
 
         logging.info(f"({sample_id}) Sample type: {sample_type}")
-        logging.info(f"({sample_id}) N. infercnv query cells: {len(query_cells)}")
-        logging.info(f"({sample_id}) N. infercnv reference cells: {len(normal_cells)}")
+        logging.info(f"({sample_id}) N. swiftCNV query cells: {len(query_cells)}")
+        logging.info(f"({sample_id}) N. swiftCNV reference cells: {len(normal_cells)}")
 
         origin_vector = cell_of_origin
         n_malignants = sample_obs[cell_type_key].isin(origin_vector).sum()
 
-        # Check if the sample is healthy (no malignant cells or very few in inferCNV query group)
+        # Check if the sample is healthy (no malignant cells or very few in swiftCNV query group)
         if sample_type == 'normal' or len(query_cells) < 20 or n_malignants <= 20:
             logging.info(f"Warning: sample ({sample_id}) does not contain enough query cells (<= 20). Classified as Normal/Unknown.")
             
@@ -1042,7 +1042,7 @@ class MalignantClassifier:
                 nn.fit(embeddings_matrix)
                 _, nn_indices = nn.kneighbors(embeddings_matrix)
 
-                sample_known_identities = self.adata.obs.loc[sample_mask, 'CNV_classif'].values
+                sample_known_identities = self.adata.obs.loc[sample_mask, 'CNV_classif'].to_numpy(dtype=object)
                 nn_identities = sample_known_identities[nn_indices]
 
                 sample_votes = [self.get_majority_vote(row) for row in nn_identities]
@@ -2679,7 +2679,7 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description='Create annotation file for inferCNV')
+    parser = argparse.ArgumentParser(description='Create annotation file for swiftCNV')
     parser.add_argument('-a','--adata_path', required=True, help='Path to the h5ad object.')
     parser.add_argument('-i','--cnv_scores', required=True, help='Path to the .npz file with the cnv matrix.')
     parser.add_argument('-g','--gene_annots', required=True, help='Path to the .tsv.gz file with the genes used by swiftCNV.')
