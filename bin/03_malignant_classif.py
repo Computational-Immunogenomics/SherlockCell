@@ -620,14 +620,11 @@ class MalignantClassifier:
         # -----------------------------------------------
         # KNN PCA Cosine Distance
         # -----------------------------------------------
-        pca_model = PCA(n_components=None)
+        pca_model = PCA(n_components=0.75, svd_solver='full') # Determine dimensions capturing up to 75% variance
         pca_embeddings = pca_model.fit_transform(cnv_mat)
 
-        # Determine dimensions capturing up to 75% variance
-        var_per = np.round(pca_model.explained_variance_ratio_ * 100, 1)
-        n_dims_pca = max(1, np.sum(np.cumsum(var_per) <= 75))
-        pca_embeddings_sub = pca_embeddings[:, :n_dims_pca]
-
+        pca_embeddings_sub = pca_embeddings
+        
         # Calculate L2 Norms for Cosine mapping conversion
         l2_norms = np.sqrt(np.sum(pca_embeddings_sub**2, axis=1))
         l2_norms[l2_norms == 0] = 1e-10
