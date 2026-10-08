@@ -1,34 +1,50 @@
 title: SherlockCell report
-template_dark_mode: false
-simple_output: true
 custom_logo: SherlockCell_full.png
 custom_logo_title: SherlockCell
+output_fn_name: sherlockcell_report.html
+
+ignore_images: false
+template_dark_mode: false
+show_analysis_time: true
+show_analysis_paths: false
+
+custom_logo_width: 200
+intro_text: A malignant cell classification pipeline for scRNA-seq datasets.
+
 custom_data:
   swiftcnv:
     section_name: SwiftCNV groups
-    description: Query cell proportion plots from SwiftCNV.
+    description: Cell proportions of the query group for SwiftCNV.
     plot_type: image
-  malignant_classification:
-    section_name: Malignant cell classifier
+
+  malignant_umap:
+    section_name: Malignant cell classification
+    description: UMAP and alluvial plots with malignant cell classification results.
     plot_type: image
-output_fn_name: sherlockcell_report.html
+
+  cnv_heatmap:
+    section_name: CNV Summary Heatmap
+    description: Heatmap of copy number variations per sample.
+    plot_type: image
+
+  cell_metad:
+    section_name: Cells metadata
+    description: Cell type and sample information.
+    plot_type: image
+
+custom_content:
+  order:
+    - cell_metad
+    - swiftcnv
+    - cnv_heatmap
+    - malignant_umap
+    
 sp:
   swiftcnv:
-    fn: '*_query_cell_props.png'
-  malignant_classification:
-    fn: '*_classif*.png'
-report_comment: |-
-  <p>This report was generated from <a href="https://github.com/Computational-Immunogenomics/SherlockCell">SherlockCell</a> on <span id="generation-date"></span>.</p>
-
-  <script>
-    const now = new Date();
-    
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-
-    const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}`;
-    document.getElementById("generation-date").textContent = formattedDate;
-  </script>
+    fn: '*swiftcnv_cell_props.png'
+  malignant_umap:
+    fn: '*UMAP_malignant_classif*.png'
+  cnv_heatmap:
+    fn: '*CNV_heatmap*.png'
+  cell_metad:
+    fn: '*cells_metad_umap.png'
