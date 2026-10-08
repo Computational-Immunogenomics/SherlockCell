@@ -1546,7 +1546,7 @@ def final_classif_plot(adata, group_key='malignant_classif', cell_type_key='cell
     plt.tight_layout()
     plt.subplots_adjust(wspace=0.08)
 
-    plt.savefig("UMAP_malignant_classif.png", dpi=300, bbox_inches='tight')
+    plt.savefig("UMAP_malignant_classif.png", dpi=150, bbox_inches='tight')
 
     logging.info("Final classification plot generated!")
 
@@ -1617,8 +1617,8 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
             vmin=v_min,       
             vmax=v_max,         
             annot=False,
-            linewidths=0.5,      
-            linecolor="black",   
+            linewidths=0.4,      
+            linecolor="#474545",   
             cbar_kws={"shrink": 0.8, "pad": 0.02},
             ax=ax
         )
@@ -1640,7 +1640,7 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
 
     plt.tight_layout()
 
-    plt.savefig('CNV_heatmap.png', dpi=300, bbox_inches="tight")
+    plt.savefig('CNV_heatmap.png', dpi=150, bbox_inches="tight")
     logging.info('CNV summary heatmap saved!')
 
     plt.close(fig)
@@ -1789,6 +1789,164 @@ def plot_CNV_density(adata, sample_key, sample_name=None):
                             ncols=3, frameon=False, title="")
 
     return fig
+
+
+def plot_cell_metadata(adata, cell_type_key, sample_key, sample_type_key):
+
+    # Ensure all obs columns are categorical before plotting/indexing .cat
+    adata.obs[cell_type_key] = adata.obs[cell_type_key].astype('category')
+    adata.obs[sample_key] = adata.obs[sample_key].astype('category')
+    adata.obs[sample_type_key] = adata.obs[sample_type_key].astype('category')
+
+    adata.obs['reference'] = np.where(adata.obs['reference'], 'Reference', 'Query')
+    adata.obs['reference'] = adata.obs['reference'].astype('category')
+
+    # Adjust figsize to 10x8 so 2x2 subplots have adequate height for bottom legends
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(10, 8))
+
+    # -------- cell types UMAP -------------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color=cell_type_key,  
+        show=False,
+        size=10,     
+        ax=ax1,          
+        frameon=True,
+        title='Cell type',
+        legend_loc='none'
+    )
+
+    ax1.set_title('Cell type', fontweight='bold', fontsize=12)
+
+    cell_types = adata.obs[cell_type_key].cat.categories
+    colors = adata.uns[f'{cell_type_key}_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(cell_types, colors)
+    ]
+
+    ax1.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=10,
+        handletextpad=0.10,
+        columnspacing=1.5              
+    )
+
+    ax1.spines['top'].set_visible(False)
+    ax1.spines['right'].set_visible(False)
+    ax1.set_xlabel('UMAP_1', fontsize=8)
+    ax1.set_ylabel('UMAP_2', fontsize=8)
+
+    # -------- samples UMAP -------------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color=sample_key,  
+        show=False,
+        size=10,    
+        ax=ax2,          
+        frameon=True,
+        title='Sample'
+    )
+
+    ax2.set_title('Sample', fontweight='bold', fontsize=12)
+    ax2.spines['top'].set_visible(False)
+    ax2.spines['right'].set_visible(False)
+    ax2.set_xlabel('UMAP_1', fontsize=8)
+    ax2.set_ylabel('UMAP_2', fontsize=8)
+    ax2.legend(fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left', frameon=False, handletextpad=0.10)
+
+    # -------- sample_type UMAP -------------
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color=sample_type_key,  
+        show=False,
+        size=10,     
+        ax=ax3,          
+        frameon=True,
+        title='',
+        legend_loc='none'
+    )
+
+    ax3.set_title('Sample type', fontweight='bold', fontsize=12)
+
+    sample_types = adata.obs[sample_type_key].cat.categories
+    sample_colors = adata.uns[f'{sample_type_key}_colors']
+
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=8)
+        for label, c in zip(sample_types, sample_colors)
+    ]
+
+    ax3.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=10,
+        handletextpad=0.10                
+    )
+
+    ax3.spines['top'].set_visible(False)
+    ax3.spines['right'].set_visible(False)
+    ax3.set_xlabel('UMAP_1', fontsize=8)
+    ax3.set_ylabel('UMAP_2', fontsize=8)
+
+    # -------- swiftcnv groups UMAP -------------
+    group_colors = {'Reference': '#00C1CA', 'Query': '#FA786D'}
+
+    sc.pl.embedding(
+        adata,
+        basis='X_umap', 
+        color='reference',  
+        show=False,
+        size=10,     
+        ax=ax4,
+        palette=group_colors,         
+        frameon=True,
+        title='',
+        legend_loc='none'
+    )
+
+    ax4.set_title('SwiftCNV groups', fontweight='bold', fontsize=12)
+
+    legend_elements = [
+        Line2D([0], [0], marker='s', color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=10)
+        for label, c in group_colors.items()
+    ]
+
+    # Fixed: Changed plt.legend to ax4.legend
+    ax4.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.05), 
+        ncol=2,                       
+        frameon=False,                  
+        fontsize=10,
+        handletextpad=0.10                
+    )
+
+    ax4.spines['top'].set_visible(False)
+    ax4.spines['right'].set_visible(False)
+    ax4.set_xlabel('UMAP_1', fontsize=8)
+    ax4.set_ylabel('UMAP_2', fontsize=8)
+
+    plt.subplots_adjust(wspace=0.25, hspace=0.5)
+
+    plt.savefig("cells_metad_umap.png", dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+
+
 
 
 def plot_report_01(adata, cell_type_key, sample_key):
@@ -2625,6 +2783,8 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
     del adata_malig
 
     # Metrics plots
+
+    plot_cell_metadata(adata, cell_type_key, sample_key, sample_type_key)
 
     filename = "reannot_metrics_plots.pdf"
 

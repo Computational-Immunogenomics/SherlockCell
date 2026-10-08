@@ -4,6 +4,9 @@ import warnings
 import scanpy as sc
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.path import Path as MplPath
+import numpy as np
 import seaborn as sns
 import argparse
 
@@ -103,7 +106,7 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
     return annotation
 
 
-def plot_cell_type_percentages(adata, cell_type_key, dataset):
+def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
     """
     Creates a bar plot showing the overall percentage of each cell type 
     relative to the total number of valid cells, dynamically sized and sorted.
@@ -111,6 +114,8 @@ def plot_cell_type_percentages(adata, cell_type_key, dataset):
     print(f">> Creating cell percentage plot for {dataset}")
 
     print(adata.obs.groupby([cell_type_key, 'reference'], observed=True).size())
+    
+    # ------ barplot ------------
 
     adata.obs["reference"] = adata.obs["reference"].fillna(False).astype(bool)
 
@@ -135,43 +140,99 @@ def plot_cell_type_percentages(adata, cell_type_key, dataset):
     cell_pcts = cell_pcts.sort_values(by='pct_cells', ascending=False)
     order_list = cell_pcts[cell_type_key].tolist()
 
-    # Dynamically adjust figure width
-    num_cell_types = len(order_list)
-    dynamic_width = max(6, 3 + (num_cell_types * 0.5))
-    
-    plt.figure(figsize=(dynamic_width, 4))
+    # umap data preparation
+    adata.obs['reference'] = np.where(adata.obs['reference'], 'Reference', 'Query')
 
-    # Create the plot
-    ax = sns.barplot(
+    counts = adata.obs.groupby([sample_key, 'reference']).size().unstack(fill_value=0)
+
+    df_pct = counts.div(counts.sum(axis=1), axis=0) * 100
+
+    # dynamic width
+    
+    n_cell_types = len(order_list)
+    n_samples = len(df_pct)
+
+    width1 = max(4, n_cell_types * 0.9)
+    width2 = max(4, n_samples * 0.5)
+    
+    total_width = width1 + width2
+    print(total_width)
+    print(width1, width2)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(total_width, 3.5), gridspec_kw={'width_ratios': [1.2, 1]})
+
+    sns.barplot(
         data=cell_pcts,
         x=cell_type_key,
         y='pct_cells',
         hue=cell_type_key,     
-        order=order_list,       
+        order=order_list,
+        ax=ax1,       
         dodge=False,           
         edgecolor="#2B2B2B",   
         linewidth=0.3, 
-        width=0.9,             
+        width=0.85,             
         legend=False           
     )
 
-    ax.set_title(f"Cell types used as inferCNV query")
-    ax.set_xlabel("")
-    ax.set_ylabel("% of total")
+    # ax.set_title(f"Cell types used as swiftCNV query")
+    ax1.set_xlabel("")
+    ax1.set_ylabel("% of total")
+    ax1.set_title(f"Cell types used as swiftCNV query")
 
     sns.despine()
 
-    plt.xticks(
-        rotation=45, 
-        ha='right',       
-        fontsize=12, 
-        fontweight='bold' 
+    ax1.tick_params(axis='x', rotation=45, labelsize=12)
+
+    # Set horizontal alignment and font weight on the tick labels directly
+    for label in ax1.get_xticklabels():
+        label.set_ha('right')
+        label.set_fontweight('bold')
+
+    # -------- swiftCNV group proportions ---------
+
+    group_colors = {'Reference': '#00C1CA', 'Query': '#FA786D'}
+
+    df_pct.plot(
+        kind='bar',
+        stacked=True,
+        color=group_colors,
+        ax=ax2,
+        edgecolor='black',
+        linewidth=0.5,
+        width= 0.95,
+        legend=False
     )
 
-    plt.tight_layout()
-   
-    out_file = f"{dataset}_query_cell_props.png"
-    plt.savefig(out_file, dpi=300)
+    # Formatting labels and legend
+    plt.title('Proportion of swiftCNV groups', fontsize=12, pad=12)
+    plt.xlabel("")
+    plt.ylabel('Percentage (%)', fontsize=12)
+    plt.ylim(0, 100)
+    plt.xticks(fontsize=12, rotation=45, fontweight='bold')
+
+    rect_path = MplPath(
+        [(-0.7, -0.3), (0.75, -0.3), (0.75, 0.5), (-0.7, 0.5), (-0.7, -0.3)]
+    )
+
+    legend_elements = [
+        Line2D([0], [0], marker=rect_path, color='none', markerfacecolor=c, markeredgecolor='none', label=label, markersize=10)
+        for label, c in group_colors.items()
+    ]
+
+    plt.legend(
+        handles=legend_elements,
+        loc='upper center',
+        bbox_to_anchor=(0.5, -0.15), 
+        ncol=4,                       
+        frameon=False,                  
+        fontsize=12,
+        handletextpad=0.10                
+    )
+
+    ax2.set_xlim(-0.55, len(df_pct) - 0.45)
+       
+    plt.savefig('swiftcnv_cell_props.png', dpi=150, bbox_inches="tight")
     plt.close()
 
     print(f">> Cell percentage plot created!")
@@ -187,7 +248,7 @@ def main(adata_path, dataset, cell_type_key, sample_key, scf_annots, cell_origin
 
     annotation.to_csv(f'cell_annotations_{dataset}.tsv', sep='\t', index=False)
 
-    plot_cell_type_percentages(adata, cell_type_key, dataset)
+    plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset)
 
 
 if __name__ == "__main__":
