@@ -95,6 +95,12 @@ def create_annotations(adata, cell_type_key, sample_key, cell_origin, sample_typ
         exclude_cells = adata.obs[cell_type_key].isin(exclude_cell_origin_list)
         adata.obs.loc[exclude_cells, "reference"] = False
 
+    # if all the cells are predicted as malignant by the classifier, keep as query only cells of origin
+    all_malignant = (adata.obs['scf_predict'] == 'Malignant').all()
+    if all_malignant:
+        # Keep non-origin cells as reference, preserving NA and explicitly excluded masks
+        adata.obs.loc[~coo & ~is_null & ~is_na_str & ~exclude_cells, "reference"] = True
+
 
     # Format output
     annotation = pd.DataFrame({
