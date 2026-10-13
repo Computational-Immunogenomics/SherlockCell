@@ -1,0 +1,67 @@
+title: SherlockCell report
+custom_logo: SherlockCell_full.png
+custom_logo_title: SherlockCell
+output_fn_name: sherlockcell_report.html
+
+ignore_images: false
+template_dark_mode: false
+show_analysis_time: true
+show_analysis_paths: false
+simple_output: true
+
+custom_logo_width: 200
+intro_text: A malignant cell classification pipeline for scRNA-seq datasets.
+
+custom_data:
+  swiftcnv:
+    section_name: SwiftCNV groups
+    description: Cell proportions of the query group for SwiftCNV.
+    plot_type: image
+
+  malignant_umap:
+    section_name: Malignant cell classification
+    description: UMAP and alluvial plots with malignant cell classification results.
+    plot_type: image
+
+  cnv_heatmap:
+    section_name: CNV Summary Heatmap
+    description: Heatmap of copy number variations per sample.
+    plot_type: image
+
+  cell_metad:
+    section_name: Cells metadata
+    description: Cell type and sample information.
+    plot_type: image
+
+  maligant_scores:
+    section_name: Malignant scores
+    description: Distribution of the three independent malignancy scores.
+    plot_type: image
+
+  maligant_steps:
+    section_name: Classification steps
+    description: UMAP plots showing the results of each malignant classification step. 
+    plot_type: image
+
+custom_content:
+  order:
+    - cell_metad
+    - swiftcnv
+    - cnv_heatmap
+    - malignant_umap
+    - maligant_scores
+    - maligant_steps
+    
+sp:
+  swiftcnv:
+    fn: '*swiftcnv_cell_props.png'
+  malignant_umap:
+    fn: '*UMAP_malignant_classif*.png'
+  cnv_heatmap:
+    fn: '*CNV_heatmap*.png'
+  cell_metad:
+    fn: 'cells_metad_umap.png'
+  maligant_scores:
+    fn: 'all_samples_CNV_density.png'
+  maligant_steps:
+    fn: 'cells_metad_umap_2.png'

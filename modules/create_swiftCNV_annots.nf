@@ -23,7 +23,7 @@ process create_swiftCNV_annots {
 
     output:
         tuple val(dataset), path("cell_annotations_*.tsv"), emit: cell_annots
-        tuple val(dataset), path("*_query_cell_props.png"), emit: query_pcts_plot, optional: true
+        tuple val(dataset), path("swiftcnv_cell_props.png"), emit: query_pcts_plot, optional: true
 
     script:
         def origin_flag = cell_origin ? "-c '${cell_origin}'" : ""

@@ -2,7 +2,9 @@ process malignant_classif{
     label "malignant_classif"
     tag "${dataset}"
 
-    publishDir { "${out_dir}/malignant_classif" }, mode: 'copy', overwrite: true
+    publishDir { "${out_dir}/malignant_classif" }, mode: 'copy', overwrite: true, saveAs: { filename ->
+        filename.startsWith("cells_metad_umap") || filename == "all_samples_CNV_density.png" || filename == "UMAP_malignant_classif.png" ? null : filename
+    }
 
     memory {
         def attempt = task.attempt ?: 1
@@ -24,6 +26,9 @@ process malignant_classif{
 
     output:
         tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmaps
+        tuple val(dataset), path("cells_metad_umap.png"), emit: cell_metadata
+        tuple val(dataset), path("cells_metad_umap_2.png"), emit: cell_metadata_2
+        tuple val(dataset), path("all_samples_CNV_density.png"), emit: density_plot, optional: true
         tuple val(dataset), path("UMAP_malignant_classif.png"), emit: umap_classif
         tuple val(dataset), path("reannot_metrics_plots.pdf"), emit: metric_plots
         tuple val(dataset), path("boxplots_cnv_chrArms.pdf"), emit: boxplots

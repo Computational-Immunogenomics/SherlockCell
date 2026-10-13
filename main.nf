@@ -8,6 +8,7 @@ include { SCF } from './modules/SCF'
 include { create_swiftCNV_annots } from './modules/create_swiftCNV_annots'
 include { swiftCNV } from './modules/swiftCNV'
 include { malignant_classif } from './modules/malignant_classif'
+include { multiqc } from './modules/multiqc'
 
 workflow {
 
@@ -78,6 +79,29 @@ workflow {
 
     
     malignant_classif(ch_malig_input)
+
+    // Group all plots across all datasets into a single collection
+    ch_multiqc_files = create_swiftCNV_annots.out.query_pcts_plot
+        .mix(
+            malignant_classif.out.umap_classif,
+            malignant_classif.out.cell_metadata,
+            malignant_classif.out.cell_metadata_2,
+            malignant_classif.out.cnv_summary_heatmap,
+            malignant_classif.out.density_plot
+        )
+        .map { dataset, plot_file -> plot_file }
+        .collect()
+
+    ch_out_dir = ch_data_dirs.map { dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference, counts_in_X -> 
+            tuple(dataset, out_dir) }
+
+    multiqc(
+    file(params.multiqc_config),
+    file("${projectDir}/assets/custom.css"),
+    file("${projectDir}/docs/images/SherlockCell_full.png"),
+    ch_multiqc_files,
+    ch_out_dir
+    )
 
 
 }

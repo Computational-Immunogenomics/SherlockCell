@@ -1,0 +1,39 @@
+/* Target the <small> tag inside any <h1> tag in the main page */
+h1 small,
+#page_title + h1 small,
+.mainpage h1 small {
+  font-size: 20px !important;
+  font-weight: normal !important;
+  color: #727272 !important;
+  margin-top: 4px !important;
+  display: block !important; /* Converts inline <small> into a block element so font-size & margins take effect */
+}
+
+/* Force images in custom sections to stack vertically */
+.mqc-custom-content-image,
+.mqc-custom-content-image-wrapper {
+  flex: 1 0 100% !important;
+  max-width: 100% !important;
+  margin-bottom: 15px !important;
+}
+
+/* Cap plot sizes */
+.mqc-custom-content-image img {
+  max-width: 1200px !important;
+  height: auto !important;
+  display: block;
+}
+
+.mqc-module-section {
+  margin-bottom: 70px !important;  /* Adjust spacing (e.g., 50px, 80px, 100px) */
+  padding-bottom: 20px !important;
+}
+
+/* Description text inside MultiQC custom sections */
+.mqc-module-section p,
+[id^="mqc-module-section"] p {
+  font-size: 16px !important;   
+  color: #4a5568 !important;     
+  font-weight: 500 !important;
+  margin-bottom: 15px !important;
+}
