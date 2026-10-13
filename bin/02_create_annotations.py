@@ -156,8 +156,6 @@ def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
     width2 = max(4, n_samples * 0.5)
     
     total_width = width1 + width2
-    print(total_width)
-    print(width1, width2)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(total_width, 3.5), gridspec_kw={'width_ratios': [1.2, 1]})
 
@@ -171,7 +169,7 @@ def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
         dodge=False,           
         edgecolor="#2B2B2B",   
         linewidth=0.3, 
-        width=0.85,             
+        width=0.90,             
         legend=False           
     )
 
@@ -182,7 +180,7 @@ def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
 
     sns.despine()
 
-    ax1.tick_params(axis='x', rotation=45, labelsize=12)
+    ax1.tick_params(axis='x', rotation=45, labelsize=10)
 
     # Set horizontal alignment and font weight on the tick labels directly
     for label in ax1.get_xticklabels():
@@ -209,7 +207,7 @@ def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
     plt.xlabel("")
     plt.ylabel('Percentage (%)', fontsize=12)
     plt.ylim(0, 100)
-    plt.xticks(fontsize=12, rotation=45, fontweight='bold')
+    plt.xticks(fontsize=10, rotation=45, fontweight='bold')
 
     rect_path = MplPath(
         [(-0.7, -0.3), (0.75, -0.3), (0.75, 0.5), (-0.7, 0.5), (-0.7, -0.3)]

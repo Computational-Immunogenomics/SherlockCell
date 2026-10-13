@@ -85,6 +85,7 @@ workflow {
         .mix(
             malignant_classif.out.umap_classif,
             malignant_classif.out.cell_metadata,
+            malignant_classif.out.cell_metadata_2,
             malignant_classif.out.cnv_summary_heatmap,
             malignant_classif.out.density_plot
         )

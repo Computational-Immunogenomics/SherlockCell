@@ -34,8 +34,13 @@ custom_data:
     plot_type: image
 
   maligant_scores:
-    section_name: Malignant scores - CNV classification
+    section_name: Malignant scores
     description: Distribution of the three independent malignancy scores.
+    plot_type: image
+
+  maligant_steps:
+    section_name: Classification steps
+    description: UMAP plots showing the results of each malignant classification step. 
     plot_type: image
 
 custom_content:
@@ -44,6 +49,8 @@ custom_content:
     - swiftcnv
     - cnv_heatmap
     - malignant_umap
+    - maligant_scores
+    - maligant_steps
     
 sp:
   swiftcnv:
@@ -53,6 +60,8 @@ sp:
   cnv_heatmap:
     fn: '*CNV_heatmap*.png'
   cell_metad:
-    fn: '*cells_metad_umap.png'
+    fn: 'cells_metad_umap.png'
   maligant_scores:
     fn: 'all_samples_CNV_density.png'
+  maligant_steps:
+    fn: 'cells_metad_umap_2.png'

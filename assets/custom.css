@@ -28,3 +28,12 @@ h1 small,
   margin-bottom: 70px !important;  /* Adjust spacing (e.g., 50px, 80px, 100px) */
   padding-bottom: 20px !important;
 }
+
+/* Description text inside MultiQC custom sections */
+.mqc-module-section p,
+[id^="mqc-module-section"] p {
+  font-size: 16px !important;   
+  color: #4a5568 !important;     
+  font-weight: 500 !important;
+  margin-bottom: 15px !important;
+}
