@@ -55,3 +55,9 @@ Finally, the CNV heatmaps with the cell type annotation and the classification r
 <img src="docs/images/CNV_heatmaps_samples.jpg" alt="CNV_heatmaps_samples" align="center">
 
 <br>
+
+
+## Future features
+
+- Compatibility with R objects
+- Output as html multiQC report
