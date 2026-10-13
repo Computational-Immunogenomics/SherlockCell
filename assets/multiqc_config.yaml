@@ -7,6 +7,7 @@ ignore_images: false
 template_dark_mode: false
 show_analysis_time: true
 show_analysis_paths: false
+simple_output: true
 
 custom_logo_width: 200
 intro_text: A malignant cell classification pipeline for scRNA-seq datasets.
@@ -32,6 +33,11 @@ custom_data:
     description: Cell type and sample information.
     plot_type: image
 
+  maligant_scores:
+    section_name: Malignant scores - CNV classification
+    description: Distribution of the three independent malignancy scores.
+    plot_type: image
+
 custom_content:
   order:
     - cell_metad
@@ -48,3 +54,5 @@ sp:
     fn: '*CNV_heatmap*.png'
   cell_metad:
     fn: '*cells_metad_umap.png'
+  maligant_scores:
+    fn: 'all_samples_CNV_density.png'

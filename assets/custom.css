@@ -19,7 +19,12 @@ h1 small,
 
 /* Cap plot sizes */
 .mqc-custom-content-image img {
-  max-width: 1400px !important;
+  max-width: 1200px !important;
   height: auto !important;
   display: block;
+}
+
+.mqc-module-section {
+  margin-bottom: 70px !important;  /* Adjust spacing (e.g., 50px, 80px, 100px) */
+  padding-bottom: 20px !important;
 }

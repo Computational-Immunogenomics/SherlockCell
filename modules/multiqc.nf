@@ -1,6 +1,6 @@
 process multiqc {
     label "multiQC_report"
-    publishDir path: { "${out_dir}/pipeline_report" }, mode: 'copy', overwrite: true
+    publishDir path: { "${out_dir}/malignant_classif" }, mode: 'copy', overwrite: true
 
     input:
     path multiqc_config

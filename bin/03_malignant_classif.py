@@ -2400,7 +2400,7 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
     knn_colors = {'Normal': '#b2dfee', 'Malignant': '#cd5555'}
     
     # Initialize PDF object if saving
-    pdf = PdfPages(save_pdf) if save_pdf else None 
+    pdf = PdfPages("CNV_heatmaps_samples.pdf") if save_pdf else None 
     
     for sample in unique_samples:
         
@@ -2790,9 +2790,9 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
     with PdfPages(filename) as pdf:
         # --- PAGE 1 ---
-        fig1 = plot_report_01(classifier.adata, cell_type_key, sample_key)
-        pdf.savefig(fig1, bbox_inches='tight')
-        plt.close(fig1)
+        # fig1 = plot_report_01(classifier.adata, cell_type_key, sample_key)
+        # pdf.savefig(fig1, bbox_inches='tight')
+        # plt.close(fig1)
         
         # --- PAGE 2 ---
         fig2 = plot_report_02(classifier.adata)
@@ -2801,8 +2801,22 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
 
         # --- PAGE 3 ---
         samples = classifier.adata.obs[sample_key].unique()
+
+        n_samples = len(samples)
+
+        if n_samples == 0:
+            print("No samples found to plot.")
+        elif n_samples >= 50:
+            print(f"Number of samples too high to be plotted ({n_samples}), check the PDF report.")
+        else:
+            dpi = 150 if n_samples < 25 else 100
+
+            fig_all = plot_CNV_density(classifier.adata, sample_key=sample_key, sample_name=samples)
+            fig_all.savefig("all_samples_CNV_density.png", bbox_inches="tight", dpi=dpi)
+            plt.close(fig_all)
+
         samples_per_page = 3
-        for i in range(0, len(samples), samples_per_page):
+        for i in range(0, n_samples, samples_per_page):
             sample_batch = samples[i:i + samples_per_page]
             
             # Pass the list/array of samples to plot_CNV_density
@@ -2823,7 +2837,7 @@ def main(adata_path, sample_key, cell_type_key, cnv_scores, gene_annots, cell_an
     titles_dict = {cell_type_key: 'Cell type', 'knn_classif': 'KNN classif.', 'CNV_classif': 'CNV classif.', 'CNV_values': 'CNV values', 'malignant_score': 'Malignant score', 'malignant_classif': 'Malignant classif.' }
 
     plot_cnv_by_sample(classifier.adata, group_key=sample_key, color_by=['malignant_score', cell_type_key, 'CNV_classif', 'knn_classif', 'malignant_classif'], split_by='malignant_classif', continuous_var="malignant_score",
-                    legend_titles=titles_dict, highlight_arms= hotspotarms_dict, save_pdf="CNV_heatmaps_samples.pdf", threads=n_jobs)
+                    legend_titles=titles_dict, highlight_arms= hotspotarms_dict, save_pdf=True, save_image=True, threads=n_jobs)
 
 
     # save adata
