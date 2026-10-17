@@ -1,8 +1,10 @@
-process create_swiftCNV_annots { 
+process SWIFTCNV_ANNOTS { 
     label "swiftCNV_annots"
     tag "${dataset}" 
 
-    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true
+    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true, saveAs: { filename ->
+        filename.startsWith("swiftcnv_annots_*.log") ? null : filename
+    }
 
     memory {
             def attempt = task.attempt ?: 1
@@ -24,6 +26,7 @@ process create_swiftCNV_annots {
     output:
         tuple val(dataset), path("cell_annotations_*.tsv"), emit: cell_annots
         tuple val(dataset), path("swiftcnv_cell_props.png"), emit: query_pcts_plot, optional: true
+        tuple val(dataset), path("*.log"), emit: log_annots
 
     script:
         def origin_flag = cell_origin ? "-c '${cell_origin}'" : ""
@@ -33,5 +36,7 @@ process create_swiftCNV_annots {
 
         02_create_annotations.py -a ${anndata} -d ${dataset} \\
             -t ${cell_type_key} -s ${sample_type_key} -p ${sample_key} -x ${exclude_from_reference} -m ${scf_predictions} ${origin_flag} 
+
+        mv .command.log swiftcnv_annots_${dataset}.log
         """
         }

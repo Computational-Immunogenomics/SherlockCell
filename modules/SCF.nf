@@ -24,11 +24,14 @@ process SCF {
     output:
         tuple val(dataset), path("*_scf.csv"), emit: scf_predictions
         tuple val(dataset), path("${dataset}.h5ad"), emit: anndata
+        tuple val(dataset), path("*.log"), emit: log_scf
 
     script:
         """
         echo "${out_dir}" > .task_outdir
 
         01_run_scf.py --adata_dir "${data_dir}" --dataset "${dataset}"
+
+        mv .command.log scf_${dataset}.log
         """
         }

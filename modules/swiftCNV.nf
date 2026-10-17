@@ -1,8 +1,10 @@
-process swiftCNV{
+process SWIFTCNV { 
     label "swiftCNV"
     tag "${dataset}"
 
-    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true
+    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true, saveAs: { filename -> 
+        filename.startsWith("swiftcnv.log") ? null : filename
+    }
 
     memory {
             def attempt = task.attempt ?: 1
@@ -34,7 +36,7 @@ process swiftCNV{
         tuple val(dataset), path("gene_order.tsv.gz"), emit: gene_order_swiftCNV
         tuple val(dataset), path("cnv_scores.png"), emit: heatmap, optional: true
         tuple val(dataset), path("hmm/"), emit: hmm_dir, optional: true
-        tuple val(dataset), path("swiftcnv.log"), emit: log_file, optional: true
+        tuple val(dataset), path("swiftcnv.log"), emit: log_swiftcnv, optional: true
 
     script:
         def args = task.ext.args ?: ''

@@ -1,9 +1,12 @@
-process malignant_classif{
+process MALIGNANT_CLASSIF {
     label "malignant_classif"
     tag "${dataset}"
 
     publishDir { "${out_dir}/malignant_classif" }, mode: 'copy', overwrite: true, saveAs: { filename ->
-        filename.startsWith("cells_metad_umap") || filename == "all_samples_CNV_density.png" || filename == "UMAP_malignant_classif.png" ? null : filename
+        filename.startsWith("cells_metad_umap") || 
+        filename == "all_samples_CNV_density.png" || 
+        filename == "UMAP_malignant_classif.png" || 
+        filename.startsWith("malignant_classif_*.log") ? null : filename
     }
 
     memory {
@@ -35,6 +38,7 @@ process malignant_classif{
         tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmap_sample
         tuple val(dataset), path("CNV_heatmap.png"), emit: cnv_summary_heatmap
         tuple val(dataset), path("${dataset}_classif.h5ad"), emit: adata
+        tuple val(dataset), path("*.log"), emit: log_maligclf
 
     script:
         def origin_flag = cell_origin ? "--cell_of_origin '${cell_origin}'" : ""
@@ -54,7 +58,8 @@ process malignant_classif{
             -n "${cell_annots}" \\
             -d "${dataset}" \\
             -j ${task.cpus}
-    
+
+        mv .command.log malignant_classif_${dataset}.log
         """
 
 }

@@ -3,12 +3,12 @@
 nextflow.enable.dsl=2
 
 // Include modules
-include { count_cells } from './modules/count_cells'
+include { COUNT_CELLS } from './modules/count_cells'
 include { SCF } from './modules/SCF'
-include { create_swiftCNV_annots } from './modules/create_swiftCNV_annots'
-include { swiftCNV } from './modules/swiftCNV'
-include { malignant_classif } from './modules/malignant_classif'
-include { multiqc } from './modules/multiqc'
+include { SWIFTCNV_ANNOTS } from './modules/create_swiftCNV_annots'
+include { SWIFTCNV } from './modules/swiftCNV'
+include { MALIGNANT_CLASSIF } from './modules/malignant_classif'
+include { REPORT } from './modules/multiqc'
 
 workflow {
 
@@ -39,28 +39,28 @@ workflow {
     ch_count_input = ch_data_dirs.map { dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference, counts_in_X -> 
         tuple(dataset, adata_path, out_dir) }
     
-    count_cells(ch_count_input)
+    COUNT_CELLS(ch_count_input)
 
     ch_SCF = ch_count_input
-        .join(count_cells.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
+        .join(COUNT_CELLS.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
 
     SCF(ch_SCF)
 
     ch_swiftCNV_annots = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference, counts_in_X ->
         tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, exclude_from_reference)}
-        .join(count_cells.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
+        .join(COUNT_CELLS.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
         .join(SCF.out.anndata)
         .join(SCF.out.scf_predictions)
 
-    create_swiftCNV_annots(ch_swiftCNV_annots)
+    SWIFTCNV_ANNOTS(ch_swiftCNV_annots)
 
 
     ch_swiftCNV_input = ch_data_dirs
-        .join(create_swiftCNV_annots.out.cell_annots)
-        .join(count_cells.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
+        .join(SWIFTCNV_ANNOTS.out.cell_annots)
+        .join(COUNT_CELLS.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
 
 
-    swiftCNV(
+    SWIFTCNV(
         ch_swiftCNV_input,
         gene_annots_file, 
         params.swiftCNV.HMM,
@@ -72,36 +72,47 @@ workflow {
     ch_malig_input = ch_data_dirs.map {dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference, counts_in_X ->
         tuple(dataset, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference)}
         .join(SCF.out.anndata)
-        .join(swiftCNV.out.cnv_scores)
-        .join(swiftCNV.out.gene_order_swiftCNV)
-        .join(swiftCNV.out.cell_annots_swiftCNV)
-        .join(count_cells.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
+        .join(SWIFTCNV.out.cnv_scores)
+        .join(SWIFTCNV.out.gene_order_swiftCNV)
+        .join(SWIFTCNV.out.cell_annots_swiftCNV)
+        .join(COUNT_CELLS.out.map { dataset, count -> tuple(dataset, count.trim().toInteger()) })
 
     
-    malignant_classif(ch_malig_input)
+    MALIGNANT_CLASSIF(ch_malig_input)
 
     // Group all plots across all datasets into a single collection
-    ch_multiqc_files = create_swiftCNV_annots.out.query_pcts_plot
+    ch_multiqc_files = SWIFTCNV_ANNOTS.out.query_pcts_plot
         .mix(
-            malignant_classif.out.umap_classif,
-            malignant_classif.out.cell_metadata,
-            malignant_classif.out.cell_metadata_2,
-            malignant_classif.out.cnv_summary_heatmap,
-            malignant_classif.out.density_plot
+            MALIGNANT_CLASSIF.out.umap_classif,
+            MALIGNANT_CLASSIF.out.cell_metadata,
+            MALIGNANT_CLASSIF.out.cell_metadata_2,
+            MALIGNANT_CLASSIF.out.cnv_summary_heatmap,
+            MALIGNANT_CLASSIF.out.density_plot
         )
-        .map { dataset, plot_file -> plot_file }
-        .collect()
+        .groupTuple()
 
     ch_out_dir = ch_data_dirs.map { dataset, adata_path, out_dir, cell_origin, sample_key, cell_type_key, sample_type_key, embedding_key, exclude_from_reference, counts_in_X -> 
             tuple(dataset, out_dir) }
 
-    multiqc(
+    ch_logs = SCF.out.log_scf.map { dataset, log_file -> [ step: "SCF", dataset: dataset, file: log_file ] }
+        .mix(
+            SWIFTCNV_ANNOTS.out.log_annots.map { dataset, log_file -> [ step: "SWIFTCNV_ANNOTS", dataset: dataset, file: log_file ] },
+            SWIFTCNV.out.log_swiftcnv.map { dataset, log_file -> [ step: "SWIFTCNV", dataset: dataset, file: log_file ] },
+            MALIGNANT_CLASSIF.out.log_maligclf.map { dataset, log_file -> [ step: "MALIGNANT_CLASSIF", dataset: dataset, file: log_file ] }
+        )
+        .toList()
+        .map { logs -> [ logs ] }
+        
+
+    ch_multiqc = ch_multiqc_files
+                    .join(ch_out_dir)
+                    .combine(ch_logs)
+
+    REPORT(
+    ch_multiqc,
     file(params.multiqc_config),
     file("${projectDir}/assets/custom.css"),
-    file("${projectDir}/docs/images/SherlockCell_full.png"),
-    ch_multiqc_files,
-    ch_out_dir
+    file("${projectDir}/docs/images/SherlockCell_full.png")
     )
-
 
 }

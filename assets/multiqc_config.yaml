@@ -43,6 +43,11 @@ custom_data:
     description: UMAP plots showing the results of each malignant classification step. 
     plot_type: image
 
+  pipeline_logs:
+    section_name: Pipeline Execution Logs
+    description:  Log files for each pipeline process.
+    plot_type: html
+
 custom_content:
   order:
     - cell_metad
@@ -51,6 +56,7 @@ custom_content:
     - malignant_umap
     - maligant_scores
     - maligant_steps
+    - pipeline_logs
     
 sp:
   swiftcnv:
@@ -65,3 +71,5 @@ sp:
     fn: 'all_samples_CNV_density.png'
   maligant_steps:
     fn: 'cells_metad_umap_2.png'
+  pipeline_logs:
+    fn: '*pipeline_logs_mqc.html'
