@@ -1,4 +1,4 @@
-process count_cells {
+process COUNT_CELLS {
     tag "$dataset"
     label "count_cells"
 
@@ -15,7 +15,7 @@ process count_cells {
     import scanpy as sc
 
     try:
-        adata = sc.read_h5ad('${adata}')
+        adata = sc.read_h5ad('${adata}', backed='r')
    
     except Exception as e:
         print(f"Error: ${dataset} is not a valid h5ad file! Details: {e}", file=sys.stderr)
