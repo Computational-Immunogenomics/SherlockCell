@@ -213,7 +213,7 @@ def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
     plt.xlabel("")
     plt.ylabel('Percentage (%)', fontsize=12)
     plt.ylim(0, 100)
-    plt.xticks(fontsize=10, rotation=45, fontweight='bold')
+    plt.xticks(fontsize=10, rotation=45, fontweight='bold', ha='center')
 
     rect_path = MplPath(
         [(-0.7, -0.3), (0.75, -0.3), (0.75, 0.5), (-0.7, 0.5), (-0.7, -0.3)]
@@ -227,8 +227,8 @@ def plot_cell_type_percentages(adata, cell_type_key, sample_key, dataset):
     plt.legend(
         handles=legend_elements,
         loc='upper center',
-        bbox_to_anchor=(0.5, -0.15), 
-        ncol=4,                       
+        bbox_to_anchor=(1.15, 0.75), 
+        ncol=1,                       
         frameon=False,                  
         fontsize=12,
         handletextpad=0.10                
