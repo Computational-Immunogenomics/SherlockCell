@@ -1,12 +1,12 @@
 process MALIGNANT_CLASSIF {
     label "malignant_classif"
-    tag "${dataset}"
+    tag "${meta.dataset}"
 
-    publishDir { "${out_dir}/malignant_classif" }, mode: 'copy', overwrite: true, saveAs: { filename ->
+    publishDir { "${meta.out_dir}/malignant_classif" }, mode: 'copy', overwrite: true, saveAs: { filename ->
         filename.startsWith("cells_metad_umap") || 
         filename == "all_samples_CNV_density.png" || 
         filename == "UMAP_malignant_classif.png" || 
-        filename.startsWith("malignant_classif_*.log") ? null : filename
+        filename.startsWith("malignant_classif_${meta.dataset}.log") ? null : filename
     }
 
     memory {
@@ -25,41 +25,41 @@ process MALIGNANT_CLASSIF {
 
 
     input:
-        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(embedding_key), val(exclude_from_reference), path(anndata), path(cnv_scores), path(gene_annots), path(cell_annots), val(num_cells)
+        tuple val(meta), val(num_cells), path(anndata), path(cnv_scores), path(gene_annots), path(cell_annots)
 
     output:
-        tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmaps
-        tuple val(dataset), path("cells_metad_umap.png"), emit: cell_metadata
-        tuple val(dataset), path("cells_metad_umap_2.png"), emit: cell_metadata_2
-        tuple val(dataset), path("all_samples_CNV_density.png"), emit: density_plot, optional: true
-        tuple val(dataset), path("UMAP_malignant_classif.png"), emit: umap_classif
-        tuple val(dataset), path("reannot_metrics_plots.pdf"), emit: metric_plots
-        tuple val(dataset), path("boxplots_cnv_chrArms.pdf"), emit: boxplots
-        tuple val(dataset), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmap_sample
-        tuple val(dataset), path("CNV_heatmap.png"), emit: cnv_summary_heatmap
-        tuple val(dataset), path("${dataset}_classif.h5ad"), emit: adata
-        tuple val(dataset), path("*.log"), emit: log_maligclf
+        tuple val(meta), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmaps
+        tuple val(meta), path("cells_metad_umap.png"), emit: cell_metadata
+        tuple val(meta), path("cells_metad_umap_2.png"), emit: cell_metadata_2
+        tuple val(meta), path("all_samples_CNV_density.png"), emit: density_plot, optional: true
+        tuple val(meta), path("UMAP_malignant_classif.png"), emit: umap_classif
+        tuple val(meta), path("reannot_metrics_plots.pdf"), emit: metric_plots
+        tuple val(meta), path("boxplots_cnv_chrArms.pdf"), emit: boxplots
+        tuple val(meta), path("CNV_heatmaps_samples.pdf"), emit: cnv_heatmap_sample
+        tuple val(meta), path("CNV_heatmap.png"), emit: cnv_summary_heatmap
+        tuple val(meta), path("${meta.dataset}_classif.h5ad"), emit: adata
+        tuple val(meta), path("*.log"), emit: log_maligclf
 
     script:
-        def origin_flag = cell_origin ? "--cell_of_origin '${cell_origin}'" : ""
+        def origin_flag = meta.cell_origin ? "--cell_of_origin '${meta.cell_origin}'" : ""
 
         """
-        echo "${out_dir}" > .task_outdir
+        echo "${meta.out_dir}" > .task_outdir
         
         03_malignant_classif.py \\
             -a "${anndata}" \\
             -i "${cnv_scores}" \\
-            -s "${sample_key}" \\
-            -c "${cell_type_key}" \\
-            -t "${sample_type_key}" \\
-            -e "${embedding_key}" \\
+            -s "${meta.sample_key}" \\
+            -c "${meta.cell_type_key}" \\
+            -t "${meta.sample_type_key}" \\
+            -e "${meta.embedding_key}" \\
             ${origin_flag} \\
             -g "${gene_annots}" \\
             -n "${cell_annots}" \\
-            -d "${dataset}" \\
+            -d "${meta.dataset}" \\
             -j ${task.cpus}
 
-        mv .command.log malignant_classif_${dataset}.log
+        mv .command.log malignant_classif_${meta.dataset}.log
         """
 
 }

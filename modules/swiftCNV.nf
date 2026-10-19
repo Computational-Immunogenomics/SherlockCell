@@ -1,8 +1,8 @@
 process SWIFTCNV { 
     label "swiftCNV"
-    tag "${dataset}"
+    tag "${meta.dataset}"
 
-    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true, saveAs: { filename -> 
+    publishDir { "${meta.out_dir}/swiftCNV" }, mode: 'copy', overwrite: true, saveAs: { filename -> 
         filename.startsWith("swiftcnv.log") ? null : filename
     }
 
@@ -22,7 +22,7 @@ process SWIFTCNV {
 
     
     input:
-        tuple val(dataset), path(adata_path), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(embedding_key), val(exclude_from_reference), val(counts_in_X), path(cell_annots), val(num_cells)
+        tuple val(meta), path(adata_path), path(cell_annots), val(num_cells)
         path gene_annots
         val hmm
         val plot
@@ -31,12 +31,12 @@ process SWIFTCNV {
         
     
     output:
-        tuple val(dataset), path("cnv_scores.npz"), emit: cnv_scores
-        tuple val(dataset), path("cell_order.tsv.gz"), emit: cell_annots_swiftCNV
-        tuple val(dataset), path("gene_order.tsv.gz"), emit: gene_order_swiftCNV
-        tuple val(dataset), path("cnv_scores.png"), emit: heatmap, optional: true
-        tuple val(dataset), path("hmm/"), emit: hmm_dir, optional: true
-        tuple val(dataset), path("swiftcnv.log"), emit: log_swiftcnv, optional: true
+        tuple val(meta), path("cnv_scores.npz"), emit: cnv_scores
+        tuple val(meta), path("cell_order.tsv.gz"), emit: cell_annots_swiftCNV
+        tuple val(meta), path("gene_order.tsv.gz"), emit: gene_order_swiftCNV
+        tuple val(meta), path("cnv_scores.png"), emit: heatmap, optional: true
+        tuple val(meta), path("hmm/"), emit: hmm_dir, optional: true
+        tuple val(meta), path("swiftcnv.log"), emit: log_swiftcnv, optional: true
 
     script:
         def args = task.ext.args ?: ''
@@ -44,17 +44,17 @@ process SWIFTCNV {
         def hmm_arg = hmm ? "--hmm" : ""
         def plot_arg = plot ? "--plot" : ""
         def sex_chr_arg = sex_chr ? "--sex-chr" : ""
-        def counts_in_X_arg = (counts_in_X as Boolean) ? "-X" : ""
+        def counts_in_X_arg = (meta.counts_in_X as Boolean) ? "-X" : ""
 
         """
-        echo "${out_dir}" > .task_outdir
+        echo "${meta.out_dir}" > .task_outdir
 
         swiftcnv ${args} \\
           -i ${adata_path} \\
           -c ${cell_annots} \\
           -o . \\
           -a ${gene_annots} \\
-          -s ${sample_key} \\
+          -s ${meta.sample_key} \\
           --exclude-immune \\
           --cutoff ${cutoff} \\
           ${hmm_arg} \\

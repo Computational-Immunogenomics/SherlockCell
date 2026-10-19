@@ -1,9 +1,9 @@
 process SWIFTCNV_ANNOTS { 
     label "swiftCNV_annots"
-    tag "${dataset}" 
+    tag "${meta.dataset}" 
 
-    publishDir { "${out_dir}/swiftCNV" }, mode: 'copy', overwrite: true, saveAs: { filename ->
-        filename.startsWith("swiftcnv_annots_*.log") ? null : filename
+    publishDir { "${meta.out_dir}/swiftCNV" }, mode: 'copy', overwrite: true, saveAs: { filename ->
+        filename.startsWith("swiftcnv_annots_${meta.dataset}.log") ? null : filename
     }
 
     memory {
@@ -21,22 +21,29 @@ process SWIFTCNV_ANNOTS {
         }
 
     input:
-        tuple val(dataset), val(out_dir), val(cell_origin), val(sample_key), val(cell_type_key), val(sample_type_key), val(exclude_from_reference), val(num_cells), path(anndata), path(scf_predictions)
-
+        tuple val(meta), val(num_cells), path(anndata), path(scf_predictions)
     output:
-        tuple val(dataset), path("cell_annotations_*.tsv"), emit: cell_annots
-        tuple val(dataset), path("swiftcnv_cell_props.png"), emit: query_pcts_plot, optional: true
-        tuple val(dataset), path("*.log"), emit: log_annots
+        tuple val(meta), path("cell_annotations_*.tsv"), emit: cell_annots
+        tuple val(meta), path("swiftcnv_cell_props.png"), emit: query_pcts_plot, optional: true
+        tuple val(meta), path("*.log"), emit: log_annots
 
     script:
-        def origin_flag = cell_origin ? "-c '${cell_origin}'" : ""
+        def origin_flag = meta.cell_origin ? "-c '${meta.cell_origin}'" : ""
+        def exclude_flag = meta.exclude_from_reference ? "-x '${meta.exclude_from_reference}'" : ""
 
         """
-        echo "${out_dir}" > .task_outdir
+        echo "${meta.out_dir}" > .task_outdir
 
-        02_create_annotations.py -a ${anndata} -d ${dataset} \\
-            -t ${cell_type_key} -s ${sample_type_key} -p ${sample_key} -x ${exclude_from_reference} -m ${scf_predictions} ${origin_flag} 
+        02_create_annotations.py \\
+            -a "${anndata}" \\
+            -d "${meta.dataset}" \\
+            -t "${meta.cell_type_key}" \\
+            -s "${meta.sample_type_key}" \\
+            -p "${meta.sample_key}" \\
+            -m "${scf_predictions}" \\
+            ${exclude_flag} \\
+            ${origin_flag}
 
-        mv .command.log swiftcnv_annots_${dataset}.log
+        mv .command.log "swiftcnv_annots_${meta.dataset}.log"
         """
         }
