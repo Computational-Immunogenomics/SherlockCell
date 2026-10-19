@@ -263,7 +263,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--cell_origin', required=True, help='Tumor cell type of origin.')
     parser.add_argument('-s','--sample_type_key', required=True, help='Column from adata.obs where sample type information is stored. Only "tumor" or "normal" labels are allowed.')
     parser.add_argument('-p', '--sample_key', required=True, help='Column from adata.obs where sample information is stored.')
-    parser.add_argument('-x', '--exclude_from_reference', required=True, help='Cell type(s) to exclude frow SwiftCNV reference.')
+    parser.add_argument('-x', '--exclude_from_reference', required=False, help='Cell type(s) to exclude frow SwiftCNV reference.')
     parser.add_argument('-m', '--scf_annots', required=True, help='Predictions from Sequecing Malignang Classifier.')
 
     args = parser.parse_args()
