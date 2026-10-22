@@ -21,6 +21,8 @@ The input parameters for SherlockCell are passed throught a samplesheet.tsv file
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | dataset_name | /&#8288;path/&#8288;to/&#8288;adata.h5ad | /&#8288;path/&#8288;to/&#8288;outdir |T_cells,&nbsp;Macrophages| cell_type | sample | sample_type | X_pca | Hepatocytes |
 
+You must also specify in the `nextflow.config` file the path to the GTF file containing gene annotations, which be obtained from the [Gencode](https://www.gencodegenes.org/human/) database.
+
 To run the test data you can do:
 
 ```bash
