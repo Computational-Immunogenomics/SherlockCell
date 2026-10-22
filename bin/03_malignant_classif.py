@@ -1036,7 +1036,7 @@ class MalignantClassifier:
 
             if n_cells > 50:
                 k_val = int(np.round(np.sqrt(n_cells)))
-                k_val = max(10, min(k_val, 90))
+                k_val = max(10, min(k_val, 80))
 
                 nn = NearestNeighbors(n_neighbors=k_val, metric='euclidean', n_jobs=-1)
                 nn.fit(embeddings_matrix)
@@ -1619,7 +1619,7 @@ def plot_cnv_summary(adata, groupby, split_by=None, use_rep: str = "cnv_mat_arms
             annot=False,
             linewidths=0.4,      
             linecolor="#474545",   
-            cbar_kws={"shrink": 0.8, "pad": 0.02},
+            cbar_kws={"shrink": 0.3, "fraction": 0.02, "pad": 0.02},
             ax=ax
         )
 
@@ -1843,23 +1843,34 @@ def plot_cell_metadata(adata, cell_type_key, sample_key, sample_type_key):
     ax1.set_ylabel('UMAP_2', fontsize=8)
 
     # -------- samples UMAP -------------
+    num_samples = adata.obs[sample_key].nunique()
+    show_legend = num_samples < 20
+
     sc.pl.embedding(
         adata,
-        basis='X_umap', 
-        color=sample_key,  
+        basis="X_umap",
+        color=sample_key,
         show=False,
-        size=10,    
-        ax=ax2,          
+        size=10,
+        ax=ax2,
         frameon=True,
-        title='Sample'
+        title="Sample",
+        legend_loc="right margin" if show_legend else None,
+        legend_fontsize=10,
     )
 
-    ax2.set_title('Sample', fontweight='bold', fontsize=12)
-    ax2.spines['top'].set_visible(False)
-    ax2.spines['right'].set_visible(False)
-    ax2.set_xlabel('UMAP_1', fontsize=8)
-    ax2.set_ylabel('UMAP_2', fontsize=8)
-    ax2.legend(fontsize=10, bbox_to_anchor=(1.05, 1), loc='upper left', frameon=False, handletextpad=0.10)
+    # Axis & spine styling
+    ax2.set_title("Sample", fontweight="bold", fontsize=12)
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+    ax2.set_xlabel("UMAP_1", fontsize=8)
+    ax2.set_ylabel("UMAP_2", fontsize=8)
+
+    # Reposition legend outside the plot if displayed
+    if show_legend and ax2.get_legend() is not None:
+        sns_legend = ax2.get_legend()
+        sns_legend.set_bbox_to_anchor((1.05, 1))
+        sns_legend.set_frame_on(False)
 
     # -------- sample_type UMAP -------------
     sc.pl.embedding(
@@ -2231,7 +2242,6 @@ def get_clusters(mat, groups=None, threads=1):
 
 	return cell_order, merge_clusters(Zs, sizes)
 
-
 def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms", 
     color_by=None, split_by="malignant_classif", continuous_var="malignant_score",
     legend_titles=None, highlight_arms=None, cluster_cells=True, figsize=(20, 12), 
@@ -2267,7 +2277,39 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
         'Unknown': '#b3b3b3'
     }
     knn_colors = {'Normal': '#b2dfee', 'Malignant': '#cd5555'}
-    
+    palettes = ["Set3", "tab20", 'Paired'] 
+
+    global_color_maps = {}
+
+    if color_vars:
+        for idx, var in enumerate(color_vars):
+            if var not in adata.obs.columns:
+                continue
+
+            # Extract all unique categories across the entire dataset (preserving order if categorical)
+            if isinstance(adata.obs[var].dtype, pd.CategoricalDtype):
+                all_unique_vals = list(adata.obs[var].cat.categories)
+            else:
+                all_unique_vals = sorted([v for v in pd.unique(adata.obs[var]) if pd.notna(v)])
+
+            # Check if Scanpy colors already exist in adata.uns
+            uns_colors_key = f"{var}_colors"
+            if uns_colors_key in adata.uns and len(adata.uns[uns_colors_key]) == len(all_unique_vals):
+                group_to_color = {
+                    g: mcolors.to_rgba(c) for g, c in zip(all_unique_vals, adata.uns[uns_colors_key])
+                }
+            elif var in ['CNV_classif', 'malignant_classif']:
+                group_to_color = {g: mcolors.to_rgba(my_colors.get(g, '#CCCCCC')) for g in all_unique_vals}
+            elif var == 'knn_classif':
+                group_to_color = {g: mcolors.to_rgba(knn_colors.get(g, '#CCCCCC')) for g in all_unique_vals}
+            else:
+                cat_cmap = plt.colormaps[palettes[idx % len(palettes)]]
+                group_to_color = {g: cat_cmap(i % len(cat_cmap.colors)) for i, g in enumerate(all_unique_vals)}
+
+            # Handle missing values globally
+            group_to_color['nan'] = mcolors.to_rgba('#D3D3D3')
+            global_color_maps[var] = group_to_color
+
     # Initialize PDF object if saving
     pdf = PdfPages("CNV_heatmaps_samples.pdf") if save_pdf else None 
     
@@ -2358,34 +2400,27 @@ def plot_cnv_by_sample(adata, group_key='sample', cnv_key="cnv_mat_arms",
                 'rows': all_idx[order]
             }
 
-        # Global Color Palette Setup
-        palettes = ["Set3", "tab20", 'Paired'] 
+   
         all_legends_data = []
-        global_group_colors = {}
+        global_group_colors = global_color_maps  # Alias global color maps for downstream sidebar rendering
 
         if color_vars:
-            for idx, var in enumerate(color_vars):
-                if var not in sample_adata.obs.columns:
-                    continue # Skip missing columns defensively
-                    
-                unique_vals = sorted([v for v in pd.unique(sample_adata.obs[var]) if pd.notna(v)])
+            for var in color_vars:
+                if var not in global_color_maps:
+                    continue
+                
+                # Fetch categories present in this sample
+                sample_unique_vals = sorted([v for v in pd.unique(sample_adata.obs[var]) if pd.notna(v)])
                 has_nan = sample_adata.obs[var].isna().any()
                 
-                if var in ['CNV_classif', 'malignant_classif']:
-                    group_to_color = {g: mcolors.to_rgba(my_colors.get(g, '#CCCCCC')) for g in unique_vals}
-                elif var == 'knn_classif':
-                    group_to_color = {g: mcolors.to_rgba(knn_colors.get(g, '#CCCCCC')) for g in unique_vals}
-                else:
-                    cat_cmap = plt.colormaps[palettes[idx % len(palettes)]]
-                    group_to_color = {g: cat_cmap(i % len(cat_cmap.colors)) for i, g in enumerate(unique_vals)}
+                if has_nan and 'nan' not in sample_unique_vals:
+                    sample_unique_vals.append('nan')
                 
-                if has_nan:
-                    group_to_color['nan'] = mcolors.to_rgba('#D3D3D3')
-                    if 'nan' not in unique_vals:
-                        unique_vals.append('nan')
-                
-                global_group_colors[var] = group_to_color
-                handles = [patches.Patch(color=group_to_color[g], label=str(g)) for g in unique_vals]
+                group_to_color = global_color_maps[var]
+                handles = [
+                    patches.Patch(color=group_to_color.get(g, mcolors.to_rgba('#CCCCCC')), label=str(g)) 
+                    for g in sample_unique_vals
+                ]
                 
                 display_title = legend_titles.get(var, var)
                 all_legends_data.append((handles, display_title))
